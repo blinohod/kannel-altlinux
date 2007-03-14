@@ -1,0 +1,5 @@
+seewbmp
+run_kannel_box
+start-stop-daemon
+mtbatch
+*.exe
