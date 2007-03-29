@@ -4,7 +4,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.1
-Release: alt1
+Release: alt1.0
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -84,6 +84,9 @@ use the kannel WAP and SMS gateway.
 %_libdir/kannel/*.a
 
 %changelog
+* Fri Mar 30 2007 ALT QA Team Robot <qa-robot@altlinux.org> 1.4.1-alt1.0
+- Rebuilt due to libpq.so.4 -> libpq.so.5 soname change.
+
 * Wed Mar 14 2007 Grigory Milev <week@altlinux.ru> 1.4.1-alt1
 - New version released
 - fix build dependence
