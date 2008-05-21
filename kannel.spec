@@ -1,19 +1,28 @@
 # $Id: kannel.spec 2836 2005-01-17 11:53:55Z dude $
 # Authority: matthias
 
+%define branch meta-data
+%define kannel_user kannel
+%define kannel_group kannel
+
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.1
-Release: alt1.0
+Release: alt1.1.cvs20080124
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
-Source: http://www.kannel.org/download/%version/gateway-%version.tar.bz2
+Source: %name-%version-%branch.tar.bz2
+Source1: bearerbox.init
+Source2: smsbox.init
 
-BuildRequires: linux-libc-headers openjade transfig
-BuildRequires: ImageMagick docbook-style-dsssl flex libMySQL-devel libpq-devel
-BuildRequires: libxml2-devel openjade postgresql-devel sqlite-devel tetex-dvips
-BuildRequires: transfig zlib-devel bison byacc openssl-devel pcre-devel
+#Packager: Michael Bochkaryov <misha@altlinux.ru>
+
+PreReq: monit-base
+BuildPreReq: linux-libc-headers openssl-engines
+
+# Automatically added by buildreq on Tue May 20 2008
+BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite sqlite3 transfig
 
 %description
 The Kannel Open Source WAP and SMS gateway works as both an SMS gateway, for
@@ -42,29 +51,59 @@ use the kannel WAP and SMS gateway.
 
 
 %prep
-%setup -n gateway-%version
+%setup -n kannel_meta
 
 %build
 %configure \
-    --disable-start-stop-daemon \
-    --with-sqlite \
-    --with-mysql \
-    --with-pgsql
+		--enable-cookies \
+		--enable-docs \
+		--enable-keepalive \
+		--enable-mutex-stats \
+		--enable-localtime \
+		--enable-pam \
+		--enable-pcre \
+		--enable-sms \
+		--enable-ssl \
+		--enable-start-stop-daemon \
+		--enable-wap \
+		--with-mysql \
+		--with-pgsql \
+		--with-sqlite \
+		--with-sqlite3 \
+		--with-ssl=%_libdir/openssl
 %make_build
 
 %install
 %makeinstall
 
-#post
-#if [ $1 -eq 1 ]; then
-#   /sbin/chkconfig --add foobar
-#fi
+%make_install install-docs DESTDIR=%buildroot
+mv %buildroot%_datadir/doc/kannel _docs
+
+mkdir -p %buildroot%_sysconfdir/kannel
+mkdir -p %buildroot%_initdir
+mkdir -p %buildroot%_logdir/kannel
+mkdir -p %buildroot%_localstatedir/kannel
+mkdir -p %buildroot%_var/run/kannel
+install -m 644 gw/wapkannel.conf %buildroot%_sysconfdir/kannel
+install -m 644 gw/smskannel.conf %buildroot%_sysconfdir/kannel
+install -m 755 test/fakesmsc %buildroot%_bindir
+install -m 755 test/fakewap %buildroot%_bindir
+install -m 755 %SOURCE1 %buildroot%_initdir/kannel.bearerbox
+install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
+
+
+%pre
+%_sbindir/groupadd %kannel_group ||:
+%_sbindir/useradd -r -d /dev/null -s /dev/null -g %kannel_group -n %kannel_user \
+	2> /dev/null > /dev/null ||:
+
+%post
+%post_service kannel.bearerbox
+%post_service kannel.smsbox
                                                                                 
-#preun
-#if [ $1 -eq 0 ]; then
-#   /sbin/service foobar stop >/dev/null 2>&1 || :
-#   /sbin/chkconfig --del foobar
-#fi
+%preun
+%preun_service kannel.bearerbox
+%preun_service kannel.smsbox
                                                                                 
 #postun
 #if [ $1 -ge 1 ]; then
@@ -73,10 +112,15 @@ use the kannel WAP and SMS gateway.
 
 
 %files
-%doc AUTHORS COPYING ChangeLog NEWS README STATUS
+%doc AUTHORS COPYING ChangeLog NEWS README STATUS _docs/* contrib
 %_bindir/*
 %_sbindir/*
 %_mandir/man?/*
+%dir %_sysconfdir/kannel
+%config(noreplace) %_sysconfdir/kannel/*
+%_initdir/*
+%attr(0770,%kannel_user,%kannel_group) %dir %_var/run/kannel
+%attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel
 
 %files devel
 %_includedir/kannel/
@@ -84,6 +128,15 @@ use the kannel WAP and SMS gateway.
 %_libdir/kannel/*.a
 
 %changelog
+* Wed May 21 2008 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt1.1.cvs20080124
+- build from CVS meta-data branch:
+  + optional SMPP TLV parameters support
+	+ MO SM concatenation support
+- documentation and contribs packaged
+- init scripts and default configuration added
+- PostgreSQL support added
+- libpcre support added
+
 * Fri Mar 30 2007 ALT QA Team Robot <qa-robot@altlinux.org> 1.4.1-alt1.0
 - Rebuilt due to libpq.so.4 -> libpq.so.5 soname change.
 

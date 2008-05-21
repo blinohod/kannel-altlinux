@@ -1,0 +1,71 @@
+#!/bin/bash
+#
+# chkconfig: 2345 97 03
+# description: Kannel WAP/SMS gateway bearerbox.
+# processname: /usr/sbin/bearerbox
+# pidfile: /var/run/bearerbox.pid
+#
+# probe: true
+
+CONF=/etc/kannel/smskannel.conf
+
+WITHOUT_RC_COMPAT=1
+
+. /etc/init.d/functions
+
+LOCKFILE=/var/lock/subsys/kannel.bearerbox
+PIDFILE=/var/run/kannel/bearerbox.pid
+RETVAL=0
+
+SourceIfExists /etc/sysconfig/kannel
+
+start()
+{
+	# nginx can work with many files at one time
+	[ -n "$ULIMIT_ARGS" ] && ulimit $ULIMIT_ARGS
+	start_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/bearerbox -u kannel -d $CONF
+	RETVAL=$?
+	return $RETVAL
+}
+
+stop()
+{
+	stop_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/bearerbox
+	RETVAL=$?
+	return $RETVAL
+	rm -f $PIDFILE
+}
+
+restart()
+{
+	stop
+	start
+	RETVAL=$?
+	return $RETVAL
+}
+
+
+# See how we were called.
+case "$1" in
+	start)
+		RETVAL=$?
+		[ $RETVAL -eq 0 ] && start ||:
+		;;
+	stop)
+		stop
+		;;
+	restart)
+		stop
+		start
+		;;
+	status)
+		status --lockfile "$LOCKFILE" --pidfile "$PIDFILE" --expect-user root -- bearerbox
+		RETVAL=$?
+		;;
+	*)
+		msg_usage "kannel.bearerbox {start|stop|restart|status}"
+		RETVAL=1
+esac
+
+exit $RETVAL
+

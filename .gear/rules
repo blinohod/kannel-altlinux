@@ -1,0 +1,2 @@
+copy: *.init
+tar.bz2: kannel_meta name=kannel-@version@-meta-data base=kannel_meta
