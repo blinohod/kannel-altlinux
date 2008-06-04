@@ -8,7 +8,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.1
-Release: alt1.1.cvs20080124
+Release: alt1.2.cvs20080124
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -115,6 +115,7 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %doc AUTHORS COPYING ChangeLog NEWS README STATUS _docs/* contrib
 %_bindir/*
 %_sbindir/*
+%exclude %_sbindir/start-stop-daemon
 %_mandir/man?/*
 %dir %_sysconfdir/kannel
 %config(noreplace) %_sysconfdir/kannel/*
@@ -128,6 +129,9 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %_libdir/kannel/*.a
 
 %changelog
+* Wed Jun 04 2008 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt1.2.cvs20080124
+- start-stop-daemon removed (unused)
+
 * Wed May 21 2008 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt1.1.cvs20080124
 - build from CVS meta-data branch:
   + optional SMPP TLV parameters support
