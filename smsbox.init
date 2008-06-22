@@ -14,7 +14,7 @@ WITHOUT_RC_COMPAT=1
 . /etc/init.d/functions
 
 LOCKFILE=/var/lock/subsys/smsbox
-PIDFILE=/var/run/smsbox.pid
+PIDFILE=/var/run/kannel/smsbox.pid
 RETVAL=0
 
 SourceIfExists /etc/sysconfig/kannel
@@ -23,14 +23,14 @@ start()
 {
 	# nginx can work with many files at one time
 	[ -n "$ULIMIT_ARGS" ] && ulimit $ULIMIT_ARGS
-	start_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/smsbox -u kannel -d $CONF
+	start_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user kannel --name smsbox -- smsbox -p "$PIDFILE" -u kannel -d $CONF
 	RETVAL=$?
 	return $RETVAL
 }
 
 stop()
 {
-	stop_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/smsbox
+	stop_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user kannel --name smsbox -- smsbox
 	RETVAL=$?
 	return $RETVAL
 	rm -f $PIDFILE
@@ -60,11 +60,21 @@ case "$1" in
 		start
 		;;
 	status)
-		status --lockfile "$LOCKFILE" --pidfile "$PIDFILE" --expect-user root -- smsbox
+		status --lockfile "$LOCKFILE" --pidfile "$PIDFILE" --expect-user kannel -- smsbox
 		RETVAL=$?
 		;;
+	condstop)
+		if [ -e "$LOCKFILE" ]; then
+			stop
+		fi
+		;;
+	condrestart)
+		if [ -e "$LOCKFILE" ]; then
+			restart
+		fi
+		;;
 	*)
-		msg_usage "kannel.smsbox {start|stop|restart|status}"
+		msg_usage "kannel.smsbox {start|stop|restart|status|condstop|condrestart}"
 		RETVAL=1
 esac
 

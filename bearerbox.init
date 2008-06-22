@@ -23,14 +23,14 @@ start()
 {
 	# nginx can work with many files at one time
 	[ -n "$ULIMIT_ARGS" ] && ulimit $ULIMIT_ARGS
-	start_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/bearerbox -u kannel -d $CONF
+	start_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user kannel --name bearerbox -- bearerbox -u kannel -p "$PIDFILE" -d $CONF
 	RETVAL=$?
 	return $RETVAL
 }
 
 stop()
 {
-	stop_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user root -- /usr/sbin/bearerbox
+	stop_daemon --pidfile "$PIDFILE" --lockfile "$LOCKFILE" --expect-user kannel --name bearerbox -- bearerbox
 	RETVAL=$?
 	return $RETVAL
 	rm -f $PIDFILE
@@ -59,11 +59,21 @@ case "$1" in
 		start
 		;;
 	status)
-		status --lockfile "$LOCKFILE" --pidfile "$PIDFILE" --expect-user root -- bearerbox
+		status --lockfile "$LOCKFILE" --pidfile "$PIDFILE" --expect-user kannel -- bearerbox
 		RETVAL=$?
 		;;
+	condstop)
+		if [ -e "$LOCKFILE" ]; then
+			stop
+		fi
+		;;
+	condrestart)
+		if [ -e "$LOCKFILE" ]; then
+			restart
+		fi
+		;;
 	*)
-		msg_usage "kannel.bearerbox {start|stop|restart|status}"
+		msg_usage "kannel.bearerbox {start|stop|restart|status|condstop|condrestart}"
 		RETVAL=1
 esac
 
