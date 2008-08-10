@@ -8,7 +8,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.1
-Release: alt1.3.cvs20080124
+Release: alt1.3.cvs20080124.1
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -129,6 +129,9 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Aug 09 2008 ALT QA Team Robot <qa-robot@altlinux.org> 1.4.1-alt1.3.cvs20080124.1
+- Automated rebuild due to libssl.so.6 -> libssl.so.7 soname change.
+
 * Sun Jun 22 2008 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt1.3.cvs20080124
 - init scripts fixed
 
