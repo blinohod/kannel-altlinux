@@ -1,2 +1,5 @@
 copy: *.init
+copy: *.logrotate
+copy: *.monit
+copy: *.patch
 tar.bz2: kannel_meta name=kannel-@version@-meta-data base=kannel_meta

@@ -8,30 +8,40 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.1
-Release: alt1.3.cvs20080124.1
+Release: alt2.cvs20081203
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
 Source: %name-%version-%branch.tar.bz2
 Source1: bearerbox.init
 Source2: smsbox.init
+Source3: kannel.logrotate
+Source4: kannel.monit
+Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
 
-#Packager: Michael Bochkaryov <misha@altlinux.ru>
+Packager: Michael Bochkaryov <misha@altlinux.ru>
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
 
-# Automatically added by buildreq on Tue May 20 2008
-BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite sqlite3 transfig
+# Automatically added by buildreq on Thu Jan 08 2009
+BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql-devel transfig libsqlite3-devel
 
 %description
-The Kannel Open Source WAP and SMS gateway works as both an SMS gateway, for
-implementing keyword based services via GSM text messages, and a WAP gateway,
-via UDP. The SMS part is fairly mature, the WAP part is early in its
-development. In this release, the GET request for WML pages and WMLScript
-files via HTTP works, including compilation for WML and WMLScript to binary
-forms. Only the data call bearer (UDP) is supported, not SMS.
+Kannel is an open source software implementing the following functionality:
 
+* WAP gateway for connecting WAP (Wireless Application Protocol) capable
+phones to the Internet. WML and WMLScript files compilation to binary
+form is supported.
+
+* SMS gateway for implementing services based on GSM/CDMA short messages.
+GSM modems, SMPP, UCP/EMI, CIMD and other SMSC connections are supported.
+
+* WAP Push Proxy Gateway (PPG).
+
+* OTA Settings delivery platform.
+
+Compiled with PAM, SSL, MySQL, PostgreSQL, SQLite3 and native malloc.
 
 %package devel
 Summary: Development files for the kannel WAP and SMS gateway
@@ -39,38 +49,35 @@ Group: Development/C
 Requires: %name = %version
 
 %description devel
-The Kannel Open Source WAP and SMS gateway works as both an SMS gateway, for
-implementing keyword based services via GSM text messages, and a WAP gateway,
-via UDP. The SMS part is fairly mature, the WAP part is early in its
-development. In this release, the GET request for WML pages and WMLScript
-files via HTTP works, including compilation for WML and WMLScript to binary
-forms. Only the data call bearer (UDP) is supported, not SMS.
-
-Install this package if you need to develop or recompile applications that
-use the kannel WAP and SMS gateway.
-
+This package contains libraries and header files for Kannel WAP and SMS
+gateway. Install this package if you need to develop or recompile
+applications that use Kannel.
 
 %prep
 %setup -n kannel_meta
+%patch0 -p2
 
 %build
 %configure \
 		--enable-cookies \
+		--enable-largefile \
 		--enable-docs \
 		--enable-keepalive \
-		--enable-mutex-stats \
+		--disable-mutex-stats \
 		--enable-localtime \
 		--enable-pam \
 		--enable-pcre \
 		--enable-sms \
 		--enable-ssl \
 		--disable-start-stop-daemon \
+		--with-defaults=speed \
 		--enable-wap \
 		--with-mysql \
 		--with-pgsql \
-		--with-sqlite \
+		--without-sqlite \
 		--with-sqlite3 \
-		--with-ssl=%_libdir/openssl
+		--with-ssl=%_libdir/openssl \
+		--disable-ssl-thread-test
 %make_build
 
 %install
@@ -80,6 +87,8 @@ use the kannel WAP and SMS gateway.
 mv %buildroot%_datadir/doc/kannel _docs
 
 mkdir -p %buildroot%_sysconfdir/kannel
+mkdir -p %buildroot%_sysconfdir/logrotate.d
+mkdir -p %buildroot%_sysconfdir/monitrc.d
 mkdir -p %buildroot%_initdir
 mkdir -p %buildroot%_logdir/kannel
 mkdir -p %buildroot%_localstatedir/kannel
@@ -90,6 +99,8 @@ install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
 install -m 755 %SOURCE1 %buildroot%_initdir/kannel.bearerbox
 install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
+install -m 755 %SOURCE3 %buildroot%_sysconfdir/logrotate.d/kannel
+install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 
 
 %pre
@@ -102,15 +113,9 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %post_service kannel.smsbox
                                                                                 
 %preun
-%preun_service kannel.bearerbox
 %preun_service kannel.smsbox
+%preun_service kannel.bearerbox
                                                                                 
-#postun
-#if [ $1 -ge 1 ]; then
-#   /sbin/service foobar condrestart >/dev/null 2>&1 || :
-#fi
-
-
 %files
 %doc AUTHORS COPYING ChangeLog NEWS README STATUS _docs/* contrib
 %_bindir/*
@@ -119,7 +124,10 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %_mandir/man?/*
 %dir %_sysconfdir/kannel
 %config(noreplace) %_sysconfdir/kannel/*
+%config(noreplace) %_sysconfdir/monitrc.d/*
+%config(noreplace) %_sysconfdir/logrotate.d/*
 %_initdir/*
+%attr(0770,%kannel_user,%kannel_group) %dir %_logdir/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_var/run/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel
 
@@ -129,8 +137,12 @@ install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 %_libdir/kannel/*.a
 
 %changelog
-* Sat Aug 09 2008 ALT QA Team Robot <qa-robot@altlinux.org> 1.4.1-alt1.3.cvs20080124.1
-- Automated rebuild due to libssl.so.6 -> libssl.so.7 soname change.
+* Thu Jan 08 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt2.cvs20081203
+- new build from fresh CVS meta-data branch (Dec 3 2008)
+- logrotate configuration added
+- monit configuration added
+- enquire_link dump removed from SMPP debug
+- disable mutexes status logging
 
 * Sun Jun 22 2008 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt1.3.cvs20080124
 - init scripts fixed
