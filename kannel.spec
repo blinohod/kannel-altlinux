@@ -7,19 +7,17 @@
 
 Summary: WAP and SMS gateway
 Name: kannel
-Version: 1.4.1
-Release: alt2.cvs20081203
+Version: 1.4.2
+Release: alt1
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
-Source: %name-%version-%branch.tar.bz2
+Source: gateway-1.4.2.tar.bz2
 Source1: bearerbox.init
 Source2: smsbox.init
 Source3: kannel.logrotate
 Source4: kannel.monit
 Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
-
-Packager: Michael Bochkaryov <misha@altlinux.ru>
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
@@ -54,7 +52,7 @@ gateway. Install this package if you need to develop or recompile
 applications that use Kannel.
 
 %prep
-%setup -n kannel_meta
+%setup -n gateway-%version
 %patch0 -p2
 
 %build
@@ -78,7 +76,7 @@ applications that use Kannel.
 		--with-sqlite3 \
 		--with-ssl=%_libdir/openssl \
 		--disable-ssl-thread-test
-%make_build
+%make
 
 %install
 %makeinstall
@@ -137,6 +135,10 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Wed Jan 14 2009 Grigory Milev <week@altlinux.ru> 1.4.2-alt1
+- New version released
+- fixed SMP build (docs don't builded on SMP when use make_build, changed to simple make)
+
 * Thu Jan 08 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.1-alt2.cvs20081203
 - new build from fresh CVS meta-data branch (Dec 3 2008)
 - logrotate configuration added
