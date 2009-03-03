@@ -1,9 +1,16 @@
-NEWS about Kannel: Open Source WAP and SMS Gateway version 1.4.2
+NEWS about Kannel: Open Source WAP and SMS Gateway version 1.4.3
 
 This is a STABLE version. It should be usable for production systems.
 Please do report problems to the Kannel bug tracking system available at 
 http://bugs.kannel.org/ or send a mail to <devel@kannel.org> (the development 
 mailing list).
+
+
+Changes since version 1.4.2: 
+
+Bugfixes:
+
+  * Fixed SMPP's DLR support, which was broken in 1.4.2 due to a modification.
 
 
 Changes since version 1.4.1: 

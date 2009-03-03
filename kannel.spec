@@ -7,12 +7,12 @@
 
 Summary: WAP and SMS gateway
 Name: kannel
-Version: 1.4.2
+Version: 1.4.3
 Release: alt1
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
-Source: gateway-1.4.2.tar.bz2
+Source: gateway-%version.tar.bz2
 Source1: bearerbox.init
 Source2: smsbox.init
 Source3: kannel.logrotate
@@ -135,6 +135,11 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Tue Mar 03 2009 Grigory Milev <week@altlinux.ru> 1.4.3-alt1
+- Please upgrade from 1.4.2 stable to 1.4.3 stable immediately.
+  Due to a bug in the 1.4.2 stable release, any DLRs via SMPP v3.4 will cause a
+  PANIC condition in bearerbox. - The Kannel Group 
+
 * Wed Jan 14 2009 Grigory Milev <week@altlinux.ru> 1.4.2-alt1
 - New version released
 - fixed SMP build (docs don't builded on SMP when use make_build, changed to simple make)
