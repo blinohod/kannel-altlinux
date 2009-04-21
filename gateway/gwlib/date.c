@@ -65,11 +65,11 @@
 
 #include "gwlib.h"
 
-static unsigned char *wkday[7] = {
+static char const *wkday[7] = {
     "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 };
 
-static unsigned char *monthname[12] = {
+static char const *monthname[12] = {
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
@@ -89,7 +89,7 @@ static int monthstart[12] = {
 Octstr *date_format_http(unsigned long unixtime)
 {
     struct tm tm;
-    unsigned char buffer[30];
+    char buffer[30];
 
     tm = gw_gmtime((time_t) unixtime);
 
@@ -226,8 +226,8 @@ error:
 
 int date_parse_iso (struct universaltime *ut, Octstr *os)
 {
-    long pos = 0;
-    int c;
+    int n = 0;
+    char *p, *q;
 
     /* assign defaults */
     ut->month = 0;
@@ -236,41 +236,55 @@ int date_parse_iso (struct universaltime *ut, Octstr *os)
     ut->minute = 0;
     ut->second = 0;
 
-    if ((pos = octstr_parse_long(&(ut->year), os, pos, 10)) < 0)
+    p = octstr_get_cstr(os);
+    q = p + ((n = octstr_search_char(os, 'T', 0)) >= 0 ? n : octstr_len(os)); /* stop at the end of string or at the time separator */
+    if (sscanf(p, "%4ld%n", &ut->year, &n) < 1)
         return -1;
+    p += n;
+
     if (ut->year < 70)
         ut->year += 2000;
     else if (ut->year < 100)
 	ut->year += 1900;
-
-    while ((c = octstr_get_char(os, pos)) != -1 && !gw_isdigit(c))
-	pos++;
-    if ((pos = octstr_parse_long(&(ut->month), os, pos, 10)) < 0)
+     
+    while (p < q && !gw_isdigit(*p))
+	p++;     
+    if (sscanf(p, "%2ld%n", &ut->month, &n) < 1)
 	return 0;
-
-    /* 0-based months */
+    p += n;
+     
+     /* 0-based months */
     if (ut->month > 0)
-        ut->month--;
-
-    while ((c = octstr_get_char(os, pos)) != -1 && !gw_isdigit(c))
-        pos++;
-    if ((pos = octstr_parse_long(&(ut->day), os, pos, 10)) < 0)
+	ut->month--;
+     
+    while (p < q && !gw_isdigit(*p))
+        p++;     
+    if (sscanf(p, "%2ld%n", &ut->day, &n) < 1)
 	return 0;
+    p += n;
 
-    while ((c = octstr_get_char(os, pos)) != -1 && !gw_isdigit(c))
-        pos++;
-    if ((pos = octstr_parse_long(&(ut->hour), os, pos, 10)) < 0)
-	return 0;
+    if (*q == 'T') 
+	p = q+1;
+    else
+        return 0;
 
-    while ((c = octstr_get_char(os, pos)) != -1 && !gw_isdigit(c))
-        pos++;
-    if ((pos = octstr_parse_long(&(ut->minute), os, pos, 10)) < 0)
+    while (*p && !gw_isdigit(*p))
+	p++;     
+    if (sscanf(p, "%2ld%n", &ut->hour, &n) < 1)
 	return 0;
+    p += n;
 
-    while ((c = octstr_get_char(os, pos)) != -1 && !gw_isdigit(c))
-        pos++;
-    if ((pos = octstr_parse_long(&(ut->second), os, pos, 10)) < 0)
+    while (*p && !gw_isdigit(*p))
+	p++;     
+    if (sscanf(p, "%2ld%n", &ut->minute, &n) < 1)
 	return 0;
+    p += n;
+     
+    while (*p && !gw_isdigit(*p))
+	p++;     
+    if (sscanf(p, "%2ld%n", &ut->second, &n) < 1)
+	return 0;
+     p += n;
 
     return 0;
 }

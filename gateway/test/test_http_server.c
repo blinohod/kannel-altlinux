@@ -446,6 +446,8 @@ int main(int argc, char **argv) {
     for (i = 0; i < use_threads; ++i)
         gwthread_join(threads[i]);
 
+    octstr_destroy(reply_text);
+
     debug("test.http", 0, "Program exiting normally.");
     gwlib_shutdown();
     return 0;

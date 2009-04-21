@@ -68,6 +68,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <errno.h>
 
 struct CfgGroup {
     Octstr *name;
@@ -500,8 +501,15 @@ int cfg_read(Cfg *cfg)
                     struct stat filestat;
 
                     /* check if included file is a directory */
-                    lstat(octstr_get_cstr(filename), &filestat);
-
+                    if (lstat(octstr_get_cstr(filename), &filestat) != 0) {
+                        error(errno, "lstat failed: couldn't stat `%s'", 
+                              octstr_get_cstr(filename));
+                        panic(0, "Failed to include `%s' "
+                              "(on line %ld of file %s). Aborting!",  
+                              octstr_get_cstr(filename), loc->line_no,  
+                              octstr_get_cstr(loc->filename)); 
+                    }
+                    
                     /* 
                      * is a directory, create a list with files of
                      * this directory and load all as part of the

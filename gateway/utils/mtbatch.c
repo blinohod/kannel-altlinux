@@ -62,10 +62,11 @@
  * to bearerbox as if it would be a smsbox and issues the SMS sequentially
  * to bearerbox.
  *
- * Stipe Tolj <stolj@wapme.de>
+ * Stipe Tolj <stolj@kannel.org>
+ * Vincent Chavanis <v.chavanis@telemaque.fr>
  *
- * XXX add udh (etc.) capabilities. Currently we handle only 7-bit.
- * XXX add ACK handling by providing a queue and retrying if failed.
+ * XXX Add UDH capabilities.
+ * XXX Support more charsets than 7-bit.
  */
 
 #include <string.h>
@@ -76,6 +77,7 @@
 
 #include "msg.h"
 #include "sms.h"
+#include "dlr.h"
 #include "bb.h"
 #include "shared.h"
 #include "heartbeat.h"
@@ -87,9 +89,12 @@ static List *lines = NULL;
 static Octstr *bb_host;
 static long bb_port;
 static int bb_ssl;
+static Counter *counter;
 static Octstr *service = NULL;
 static Octstr *account = NULL;
 static Octstr *from = NULL;
+static int dlr_mask = 0;
+static Octstr *dlr_url = NULL;
 static Octstr *smsc_id = NULL;
 static long sms_max_length = MAX_SMS_OCTETS;
 static double delay = 0;
@@ -135,10 +140,10 @@ static void read_messages_from_bearerbox(void *arg)
 {
     time_t start, t;
     unsigned long secs;
-    unsigned long total_s, total_f, total_ft, total_b;
+    unsigned long total_s, total_f, total_ft, total_b, total_o;
     Msg *msg;
 
-    total_s = total_f = total_ft = total_b = 0;
+    total_s = total_f = total_ft = total_b = total_o = 0;
     start = t = time(NULL);
     while (program_status != shutting_down) {
         int ret;
@@ -162,6 +167,7 @@ static void read_messages_from_bearerbox(void *arg)
              */
             msg_destroy(msg);
         } else if (msg_type(msg) == ack) {
+            counter_increase(counter);
             switch (msg->ack.nack) {
                 case ack_success:
                     total_s++;
@@ -178,13 +184,14 @@ static void read_messages_from_bearerbox(void *arg)
             }
             msg_destroy(msg);
         } else {
-            warning(0, "Received other message than sms/admin, ignoring!");
+            warning(0, "Received other message than ack/admin, ignoring!");
             msg_destroy(msg);
+            total_o++;
         }
     }
     secs = difftime(time(NULL), start);
-    info(0, "Received acks: %ld success, %ld failed, %ld failed temporarly, %ld queued in %ld seconds "
-    	 "(%.2f per second)", total_s, total_f, total_ft, total_b, secs, 
+    info(0, "Received acks: %ld success, %ld failed, %ld failed temporarly, %ld queued, %ld other in %ld seconds "
+         "(%.2f per second)", total_s, total_f, total_ft, total_b, total_o, secs,
          (float)(total_s+total_f+total_ft+total_b) / secs);
 }
 
@@ -249,6 +256,10 @@ static void help(void)
     info(0, "    defines the smsbox-id to be used for bearerbox connection (default: none)");
     info(0, "-f sender");
     info(0, "    which sender address should be used");
+    info(0, "-D dlr-mask");
+    info(0, "    defines the dlr-mask");
+    info(0, "-u dlr-url");
+    info(0, "    defines the dlr-url");
     info(0, "-n service");
     info(0, "    defines which service name should be logged (default: none)");
     info(0, "-a account");
@@ -284,11 +295,14 @@ static void init_batch(Octstr *cfilename, Octstr *rfilename)
 
     info(0,"Receivers file `%s' contains %ld destination numbers.",
          octstr_get_cstr(rfilename), lineno);
+
+    counter = counter_create();
 }
 
-static void run_batch(void)
+static unsigned long run_batch(void)
 {
     Octstr *no;
+    unsigned long linerr = 0;
     unsigned long lineno = 0;
 
     while ((no = gwlist_consume(lines)) != NULL) {
@@ -306,22 +320,28 @@ static void run_batch(void)
         msg->sms.receiver = octstr_duplicate(no);
         msg->sms.account = account ? octstr_duplicate(account) : NULL;
         msg->sms.msgdata = content ? octstr_duplicate(content) : octstr_create("");
+        msg->sms.dlr_mask = dlr_mask;
+        msg->sms.dlr_url = octstr_duplicate(dlr_url);        
         msg->sms.udhdata = octstr_create("");
         msg->sms.coding = DC_7BIT;
 
         if (send_message(msg) < 0) {
-            panic(0,"Failed to send message at line <%ld> for receiver `%s' to bearerbox.",
+            linerr++;
+            info(0,"Failed to send message at line <%ld> for receiver `%s' to bearerbox.",
                   lineno, octstr_get_cstr(no));
         }	
         msg_destroy(msg);
         octstr_destroy(no);
         }
     }
+    info(0,"mtbatch has processed %ld messages with %ld errors", lineno, linerr);
+    return lineno;
 } 
 
 int main(int argc, char **argv)
 {
     int opt;
+    unsigned long sended = 0;
     Octstr *cf, *rf;
 
     gwlib_init();
@@ -330,7 +350,7 @@ int main(int argc, char **argv)
     bb_port = 13001;
     bb_ssl = 0;
         
-    while ((opt = getopt(argc, argv, "hv:b:p:si:n:a:f:d:r:")) != EOF) {
+    while ((opt = getopt(argc, argv, "hv:b:p:si:n:a:f:D:u:d:r:")) != EOF) {
         switch (opt) {
             case 'v':
                 log_set_output_level(atoi(optarg));
@@ -357,6 +377,12 @@ int main(int argc, char **argv)
             case 'f':
                 from = octstr_create(optarg);
                 break;
+            case 'D':
+                dlr_mask = atoi(optarg);
+                break;
+            case 'u':
+                dlr_url = octstr_create(optarg);
+                break;
             case 'd':
                 delay = atof(optarg);
                 break;
@@ -373,12 +399,15 @@ int main(int argc, char **argv)
     
     if (optind == argc || argc-optind < 2) {
         help();
-        exit(0);
+        exit(1);
     }
 
     /* check some mandatory elements */
     if (from == NULL)
         panic(0,"Sender address not specified. Use option -f to specify sender address.");
+
+    if ((DLR_IS_ENABLED(dlr_mask) && dlr_url == NULL) || (!DLR_IS_ENABLED(dlr_mask) && dlr_url != NULL))
+        panic(0,"dlr-url address OR dlr-mask not specified. Use option -D or -u to specify dlr values");
 
     rf = octstr_create(argv[argc-1]);
     cf = octstr_create(argv[argc-2]);
@@ -392,7 +421,12 @@ int main(int argc, char **argv)
     identify_to_bearerbox();
     gwthread_create(read_messages_from_bearerbox, NULL);
 
-    run_batch();
+    sended = run_batch();
+
+    /* avoid exiting before sending all msgs */
+    while(sended > counter_value(counter)) {
+         gwthread_sleep(0.1);
+    }
 
     program_status = shutting_down;
     gwthread_join_all();
@@ -402,7 +436,9 @@ int main(int argc, char **argv)
     octstr_destroy(content);
     octstr_destroy(service);
     octstr_destroy(account);
+    octstr_destroy(dlr_url);
     octstr_destroy(smsc_id);
+    counter_destroy(counter);
     gwlist_destroy(lines, octstr_destroy_item); 
    
     gwlib_shutdown();

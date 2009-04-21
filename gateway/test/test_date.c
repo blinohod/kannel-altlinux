@@ -52,12 +52,6 @@
  * 
  * Portions of this software are based upon software originally written at  
  * WapIT Ltd., Helsinki, Finland for the Kannel project.  
- */ 
-
-/*
- * test_regex.c - test regex module
- *
- * Stipe Tolj <stolj@wapme.de>
  */
 
 #include <string.h>
@@ -65,92 +59,46 @@
 #include <signal.h>
 
 #include "gwlib/gwlib.h"
-#include "gwlib/regex.h"
 
-#if defined(HAVE_REGEX) || defined(HAVE_PCRE)
 
 int main(int argc, char **argv)
 {
-    Octstr *re, *os, *sub;
-    Octstr *tmp;
-    regex_t *regexp;
-    regmatch_t pmatch[REGEX_MAX_SUB_MATCH];
-    int rc;
-
+    Octstr *s;
+    struct universaltime ut;
+    
     gwlib_init();
-
+    
     get_and_set_debugs(argc, argv, NULL);
 
-    if (argc < 4)
-        panic(0, "Syntax: %s <os> <re> <sub>\n", argv[0]);
-
-    os = octstr_create(argv[1]);
-    re = octstr_create(argv[2]);
-    sub = octstr_create(argv[3]);
-
-    info(0, "step 1: generic functions");
-
-    /* compile */
-    if ((regexp = gw_regex_comp(re, REG_EXTENDED)) == NULL)
-        panic(0, "regex compilation failed!");
-
-    debug("regex",0,"RE: regex <%s> has %ld subexpressions.",
-          octstr_get_cstr(re), (long)regexp->re_nsub);
-
-    /* execute */
-    rc = gw_regex_exec(regexp, os, REGEX_MAX_SUB_MATCH, &pmatch[0], 0);
-    if (rc == REG_NOMATCH) {
-        info(0, "RE: regex <%s> did not match on string <%s>.",
-             octstr_get_cstr(re), octstr_get_cstr(os));
-    } else if (rc != 0) {
-        Octstr *err = gw_regex_error(rc, regexp);
-        error(0, "RE: regex <%s> execution failed: %s",
-              octstr_get_cstr(re), octstr_get_cstr(err));
-        octstr_destroy(err);
-    } else {
-        int i;
-        char *rsub;
-        debug("regex",0,"RE: regex <%s> matches.", octstr_get_cstr(re));
-        debug("regex",0,"RE: substring matches are:");
-        for (i = 0; i <= REGEX_MAX_SUB_MATCH; i++) {
-            if (pmatch[i].rm_so != -1 && pmatch[i].rm_eo != -1) {
-                Octstr *s = octstr_copy(os, pmatch[i].rm_so, pmatch[i].rm_eo - pmatch[i].rm_so);
-                debug("regex",0,"RE:  %d: <%s>", i, octstr_get_cstr(s));
-                octstr_destroy(s);
-            }
-        }
-        rsub = gw_regex_sub(octstr_get_cstr(sub), octstr_get_cstr(os),
-                            REGEX_MAX_SUB_MATCH, &pmatch[0]);
-        debug("regex",0,"RE: substituted string is <%s>.", rsub);
-        gw_free(rsub);
+    s = octstr_create("2009-02-10T10:02:03");
+    if (date_parse_iso(&ut, s) == -1) {
+        panic(0, "date_parse_iso failed: %s", octstr_get_cstr(s));
     }
+    info(0, "%s : %04ld-%02ld-%02ldT%02ld:%02ld:%02ld", octstr_get_cstr(s), ut.year, ut.month+1, ut.day, ut.hour, ut.minute, ut.second);
+    octstr_destroy(s);
+
+    s = octstr_create("2009-02-10");
+    if (date_parse_iso(&ut, s) == -1) {
+        panic(0, "date_parse_iso failed: %s", octstr_get_cstr(s));
+    }
+    info(0, "%s : %04ld-%02ld-%02ldT%02ld:%02ld:%02ld", octstr_get_cstr(s), ut.year, ut.month+1, ut.day, ut.hour, ut.minute, ut.second);
+    octstr_destroy(s);
     
-    info(0, "step 2: wrapper functions");
+    s = octstr_create("20090210T10:02:03");
+    if (date_parse_iso(&ut, s) == -1) {
+        panic(0, "date_parse_iso failed: %s", octstr_get_cstr(s));
+    }
+    info(0, "%s : %04ld%02ld%02ldT%02ld:%02ld:%02ld", octstr_get_cstr(s), ut.year, ut.month+1, ut.day, ut.hour, ut.minute, ut.second);
+    octstr_destroy(s);
 
-    debug("regex",0,"RE: regex_match <%s> on <%s> did: %s",
-          octstr_get_cstr(re), octstr_get_cstr(os),
-          gw_regex_match(re, os) ? "match" : "NOT match");
-
-    debug("regex",0,"RE: regex_match_pre on <%s> did: %s",
-          octstr_get_cstr(os),
-          gw_regex_match_pre(regexp, os) ? "match" : "NOT match");
-
-    tmp = gw_regex_subst(re, os, sub);
-    debug("regex",0,"RE: regex_subst <%s> on <%s> rule <%s>: %s",
-          octstr_get_cstr(re), octstr_get_cstr(os), octstr_get_cstr(sub),
-          octstr_get_cstr(tmp));
-    octstr_destroy(tmp);
-
-    tmp = gw_regex_subst_pre(regexp, os, sub);
-    debug("regex",0,"RE: regex_subst_pre on <%s> rule <%s>: %s",
-          octstr_get_cstr(os), octstr_get_cstr(sub), octstr_get_cstr(tmp));
-
-    gw_regex_destroy(regexp);
-    octstr_destroy(tmp);
-    octstr_destroy(re);
-    octstr_destroy(os);
+    s = octstr_create("20090210");
+    if (date_parse_iso(&ut, s) == -1) {
+        panic(0, "date_parse_iso failed: %s", octstr_get_cstr(s));
+    }
+    info(0, "%s : %04ld%02ld%02ldT%02ld:%02ld:%02ld", octstr_get_cstr(s), ut.year, ut.month+1, ut.day, ut.hour, ut.minute, ut.second);
+    octstr_destroy(s);
+    
     gwlib_shutdown();
     return 0;
 }
 
-#endif

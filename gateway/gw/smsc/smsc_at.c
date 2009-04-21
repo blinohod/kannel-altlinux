@@ -1202,8 +1202,37 @@ static void at2_set_speed(PrivAT2data *privdata, int bps)
             speed = B115200;
             break;
 #endif
+#ifdef B230400
+        case 230400:
+            speed = B230400;
+            break;
+#endif
+#ifdef B460800
+        case 460800:
+            speed = B460800;
+            break;
+#endif
+#ifdef B500000
+        case 500000:
+            speed = B500000;
+            break;
+#endif
+#ifdef B576000
+        case 576000:
+            speed = B576000;
+            break;
+#endif
+#ifdef B921600
+        case 921600:
+            speed = B921600;
+            break;
+#endif
         default:
-            speed = B9600;
+#if B9600 == 9600
+	     speed = bps;
+#else
+             speed = B9600;
+#endif
     }
     
     cfsetospeed(&tios, speed);
@@ -1373,6 +1402,9 @@ reconnect:
     octstr_destroy(privdata->sms_center);
     octstr_destroy(privdata->name);
     octstr_destroy(privdata->configfile);
+    octstr_destroy(privdata->username);
+    octstr_destroy(privdata->password);
+    octstr_destroy(privdata->rawtcp_host);
     gw_prioqueue_destroy(privdata->outgoing_queue, NULL);
     gwlist_destroy(privdata->pending_incoming_messages, octstr_destroy_item);
     gw_free(conn->data);
@@ -2554,15 +2586,21 @@ static int at2_detect_modem_type(PrivAT2data *privdata)
     res = at2_send_modem_command(privdata, "", 1, 0); 
     res = at2_send_modem_command(privdata, "AT", 0, 0);
 
-    if (at2_send_modem_command(privdata, "AT&F", 0, 0) == -1)
+    if (at2_send_modem_command(privdata, "AT&F", 0, 0) == -1) {
+        at2_close_device(privdata);
         return -1;
-    if (at2_send_modem_command(privdata, "ATE0", 0, 0) == -1)
+    }
+    if (at2_send_modem_command(privdata, "ATE0", 0, 0) == -1) {
+        at2_close_device(privdata);
         return -1;
+    }
 
     at2_flush_buffer(privdata);
 
-    if (at2_send_modem_command(privdata, "ATI", 0, 0) == -1)
+    if (at2_send_modem_command(privdata, "ATI", 0, 0) == -1) {
+        at2_close_device(privdata);
         return -1;
+    }
 
     /* we try to detect the modem automatically */
     i = 1;

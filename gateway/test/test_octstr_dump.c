@@ -74,8 +74,14 @@ int main(int argc, char **argv)
 
     get_and_set_debugs(argc, argv, NULL);
 
+    if (argc < 2)
+        panic(0, "Syntax: %s <file>\n", argv[0]);
+
     filename = octstr_create(argv[1]);
     data = octstr_read_file(octstr_get_cstr(filename));
+
+    if (data == NULL)
+        panic(0, "Cannot read file.");
 
     /* 
      * We test if this is a text/plain file with hex values in it.

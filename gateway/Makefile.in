@@ -75,7 +75,7 @@ CONFIG_CLEAN_FILES =
 LIBOBJS=@LIBOBJS@
 LIBSRCS=$(LIBOBJS:.o=.c)
 
-LIBS=@LIBS@
+LIBS=@LIBS@ @LIBICONV@
 CFLAGS=-D_REENTRANT=1 -I. -Igw @CFLAGS@
 LDFLAGS=@LDFLAGS@
 
@@ -106,7 +106,8 @@ binsrcs = \
 	wmlscript/wmlsc.c \
 	wmlscript/wmlsdasm.c \
 	utils/seewbmp.c \
-	utils/mtbatch.c
+	utils/mtbatch.c \
+	utils/decode_emimsg.c
 sbinsrcs = \
 	gw/bearerbox.c \
 	gw/smsbox.c \
@@ -376,6 +377,6 @@ pkg: all
 
 gw-config: utils/foobar-config.sh Makefile
 	./utils/foobar-config.sh "-I$(includedir)/kannel @CFLAGS@" \
-		"-L$(libdir)/kannel -lgw -lwap -lgwlib @LIBS@" \
+		"-L$(libdir)/kannel -lgw -lwap -lgwlib $(LIBS)" \
 		"@VERSION@" > gw-config
 	chmod 0755 gw-config
