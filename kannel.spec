@@ -23,6 +23,8 @@ Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
 
+Packager: Michael Bochkaryov <misha@altlinux.ru>
+
 # Automatically added by buildreq on Thu Jan 08 2009
 BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql-devel transfig libsqlite3-devel
 
