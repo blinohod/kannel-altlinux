@@ -4,11 +4,12 @@
 %define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
+%define cvs_build 20090417
 
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.3
-Release: alt1
+Release: alt1.cvs%cvs_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -135,6 +136,10 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Tue Apr 21 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090417
+- build from CVS tree
+- optional SMPP TLV support restored
+
 * Tue Mar 03 2009 Grigory Milev <week@altlinux.ru> 1.4.3-alt1
 - Please upgrade from 1.4.2 stable to 1.4.3 stable immediately.
   Due to a bug in the 1.4.2 stable release, any DLRs via SMPP v3.4 will cause a
