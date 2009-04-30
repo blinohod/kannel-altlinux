@@ -9,7 +9,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.4.3
-Release: alt1.cvs%cvs_build
+Release: alt0.cvs%cvs_build.M40.1
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -26,7 +26,7 @@ BuildPreReq: linux-libc-headers openssl-engines
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
 # Automatically added by buildreq on Thu Jan 08 2009
-BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql-devel transfig libsqlite3-devel
+BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex cm-super-fonts-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql8.3-devel transfig libsqlite3-devel
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -138,6 +138,9 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Thu Apr 30 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt0.cvs20090417.M40.1
+- build for 4.0 branch
+
 * Tue Apr 21 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090417
 - build from CVS tree
 - optional SMPP TLV support restored
