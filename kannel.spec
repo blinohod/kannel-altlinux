@@ -4,7 +4,7 @@
 %define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20090417
+%define cvs_build 20090525
 
 Summary: WAP and SMS gateway
 Name: kannel
@@ -138,6 +138,13 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Fri May 29 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090525
+- merge CVS updates up to May 25 2009
+  + intermediate DLR support
+	+ DLR support for mtbatch
+	+ multi-IP support implemented
+	+ return SMPP DLR error in dlr_err metadata parameter
+
 * Tue Apr 21 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090417
 - build from CVS tree
 - optional SMPP TLV support restored
