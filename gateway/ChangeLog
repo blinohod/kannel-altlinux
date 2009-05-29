@@ -1,3 +1,59 @@
+2009-05-25  Stipe Tolj  <stolj at kannel.org>
+    * doc/userguide/userguide.xml: fixing bug 'document type does not allow element 
+      "PARA" here; missing one of "FOOTNOTE", "MSGTEXT", "CAUTION", "IMPORTANT", 
+      "NOTE", "TIP", "WARNING", "BLOCKQUOTE", "INFORMALEXAMPLE" start-tag'.
+    
+2009-05-20 Alexander Malysh <amalysh at kannel.org>
+    * gw/smsc/smsc_smpp.c: some SMSCs have submit/done date with seconds. Now we
+      can parse it sscanf way.
+
+2009-05-20 Alexander Malysh <amalysh at kannel.org>
+    * doc/userguide/userguide.xml, gw/smsc/smsc_smpp.c, gw/smsbox.c, gw/dlr.h:
+      added support for intermediate notification.
+      Thanks to Alejandro Guerrieri <aguerrieri at kannel.org> for this patch.
+
+2009-05-20 Alexander Malysh <amalysh at kannel.org>
+    * doc/userguide/userguide.xml: adding clarification that user can provide own
+      message id's to the dlr-url.
+      Thanks to "Arne K. Haaje" <arne at drlinux.no> for this patch.
+ 
+2009-05-20 Alexander Malysh <amalysh at kannel.org>
+    * gwlib/octstr.c: fixed PANIC when we try to send empty message body.
+
+2009-05-06 Alexander Malysh <amalysh at kannel.org>
+    * gwlib/dbpool_oracle.c: fixed compiler warnings.
+
+2009-05-06 Alexander Malysh <amalysh at kannel.org>
+    * doc/userguide/userguide.xml, gw/bb_smscconn.c, gw/smscconn.[ch], gw/smscconn_p.h
+      gwlib/cfg.def: added new config option to smsc group 'smsc-admin-id'. This is
+      used in admin interface to shutdown/start/restart smsc links when smsc-id is
+      equal due to loadbalancing.
+      Thanks to Alejandro Guerrieri <aguerrieri at kannel.org> for this patch.
+
+2009-05-05  Stipe Tolj  <stolj at kannel.org>
+    * gw/msg.[ch], gw/msg-decl.h: remove the semicolon references from the 
+      macro definition file for the sake or usability of the macro in other
+      places. NLC.
+
+2009-05-04 Alexander Malysh <amalysh at kannel.org>
+    * aclocal.m4, configure, configure.in, gw-config.h.in, gw/dlr.c,
+      gw/dlr_p.h, gwlib/cfg.def, gwlib/dbpool.[ch], doc/userguide/userguide.xml:
+      added MSSQL support to DBPool and DLR.
+      Thanks to Alejandro Guerrieri <aguerrieri at kannel.org> for this patch.
+
+2009-05-04 Alexander Malysh <amalysh at kannel.org>
+    * gw/meta_data.[ch]: Extends meta_data_set_values function to be able to add
+      new values without replacing the whole dict.
+    * gw/smsc/smsc_smpp.c: return DLR error in dlr_err metadata parameter.
+      Thanks to Alejandro Guerrieri <aguerrieri at kannel.org> for this patch.
+
+2009-04-30 Alexander Malysh <amalysh at kannel.org>
+    * utils/mtbatch.c: fixed freeze at the shutdown.
+
+2009-04-30 Alexander Malysh <amalysh at kannel.org>
+    * utils/mtbatch.c: send the whole message to bearerbox instead of splitted
+      parts. Splitting is done in bearerbox.
+
 2009-04-17 Alexander Malysh <amalysh at kannel.org>
     * aclocal.m4, configure, configure.in: fixed FeeBSD compilation options.
       Use -lpthread instead of -lkse. See http://www.FreeBSD.org/kse/.
