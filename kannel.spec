@@ -25,7 +25,7 @@ BuildPreReq: linux-libc-headers openssl-engines
 
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
-# Automatically added by buildreq on Fri May 29 2009
+# Automatically added by buildreq on Fri May 29 2009 (-bi)
 BuildRequires: ImageMagick-tools checkstyle4 docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
 
 %description
