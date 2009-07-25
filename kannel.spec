@@ -29,7 +29,7 @@ BuildPreReq: linux-libc-headers openssl-engines
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
 # Automatically added by buildreq on Sat Jul 25 2009
-BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
+BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex cm-super-fonts-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql8.3-devel transfig libsqlite3-devel
 
 %description
 Kannel is an open source software implementing the following functionality:
