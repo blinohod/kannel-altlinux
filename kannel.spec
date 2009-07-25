@@ -20,14 +20,16 @@ Source3: kannel.logrotate
 Source4: kannel.monit
 Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
 Patch1: kannel_store_tools.patch
+Patch2: kannel-dlr-retry.patch
+Patch3: kannel-pam.patch
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
 
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
-# Automatically added by buildreq on Thu Jan 08 2009
-BuildRequires: ImageMagick checkstyle docbook-style-dsssl flex cm-super-fonts-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libxml2-devel openssl postgresql-devel transfig libsqlite3-devel
+# Automatically added by buildreq on Sat Jul 25 2009
+BuildRequires: ImageMagick-tools checkstyle4 docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -58,10 +60,13 @@ applications that use Kannel.
 %prep
 %setup -n gateway-%version
 %patch0 -p2
-%patch1 -p2
+%patch1 -p0
+%patch2 -p0
+%patch3 -p0
 
 %build
 %configure \
+		--with-cflags='-fPIC' \
 		--enable-cookies \
 		--enable-largefile \
 		--enable-docs \
