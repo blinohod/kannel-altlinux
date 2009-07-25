@@ -105,6 +105,8 @@ install -m 644 gw/wapkannel.conf %buildroot%_sysconfdir/kannel
 install -m 644 gw/smskannel.conf %buildroot%_sysconfdir/kannel
 install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
+install -m 755 test/store_tools %buildroot%_bindir/kannel_store_tools
+install -m 755 test/wapproxy %buildroot%_bindir
 install -m 755 %SOURCE1 %buildroot%_initdir/kannel.bearerbox
 install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 install -m 755 %SOURCE3 %buildroot%_sysconfdir/logrotate.d/kannel
@@ -145,6 +147,14 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs2090721.M40.1
+- Version changed to 1.5.0
+- Added PAM support patch for sendsms API
+- Added DLR retry patch
+- Added store_tools utility for SMS storage management
+- Added -fPIC build flag for building kannel based software
+- wapproxy is packaged
+
 * Thu Apr 30 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt0.cvs20090417.M40.1
 - build for 4.0 branch
 
