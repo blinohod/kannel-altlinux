@@ -788,10 +788,19 @@ static int at2_wait_modem_command(PrivAT2data *privdata, time_t timeout, int gt_
             }
             if (octstr_search(line, octstr_imm("+CMS ERROR"), 0) != -1) {
                 int errcode;
-                error(0, "AT2[%s]: CMS ERROR: %s", octstr_get_cstr(privdata->name), 
+                error(0, "AT2[%s]: +CMS ERROR: %s", octstr_get_cstr(privdata->name), 
                       octstr_get_cstr(line));
                 if (sscanf(octstr_get_cstr(line), "+CMS ERROR: %d", &errcode) == 1)
-                    error(0, "AT2[%s]: CMS ERROR: %s (%d)", octstr_get_cstr(privdata->name), 
+                    error(0, "AT2[%s]: +CMS ERROR: %s (%d)", octstr_get_cstr(privdata->name), 
+                          at2_error_string(errcode), errcode);
+                ret = 1;
+                goto end;
+            } else if (octstr_search(line, octstr_imm("+CME ERROR"), 0) != -1) {
+                int errcode;
+                error(0, "AT2[%s]: +CME ERROR: %s", octstr_get_cstr(privdata->name),
+                      octstr_get_cstr(line));
+                if (sscanf(octstr_get_cstr(line), "+CME ERROR: %d", &errcode) == 1)
+                    error(0, "AT2[%s]: +CME ERROR: %s (%d)", octstr_get_cstr(privdata->name),
                           at2_error_string(errcode), errcode);
                 ret = 1;
                 goto end;
@@ -1329,7 +1338,8 @@ reconnect:
         }
 
         if (at2_init_device(privdata) != 0) {
-            error(0, "AT2[%s]: Initialization of device failed.", octstr_get_cstr(privdata->name));
+            error(0, "AT2[%s]: Initialization of device failed. Attempt #%d on %ld max.", octstr_get_cstr(privdata->name),
+                     error_count, privdata->max_error_count);
             at2_close_device(privdata);
             error_count++;
             reconnecting = 1;
@@ -2892,50 +2902,266 @@ static int at2_set_message_storage(PrivAT2data *privdata, Octstr *memory_name)
 }
 
 
-static const char *at2_error_string(int code)
+static const char *at2_error_string(int errcode)
 {
-    switch (code) {
+    /*
+     * +CMS ERRORS
+     * 0...127 from GSM 04.11 Annex E-2 values
+     * 128...255 from GSM 03.40 subclause 9.2.3.22
+     * 300...511 from GSM 07.05 subclause 3.2.5
+     * 512+ are manufacturer specific according to GSM 07.05 subclause 3.2.5
+     * 
+     * +CME ERRORS
+     * CME Error codes from GSM 07.07 section 9.2
+     * GPP TS 27.007 /2/
+     * GPRS-related errors - (GSM 04.08 cause codes)
+     * 
+     */
+    switch (errcode) {
+    case 0:
+        /*
+         * Default the code to 0 then when you extract the value from the
+         * modem response message and no code is found, 0 will result.
+         */
+        return "Modem returned ERROR but no error code - possibly unsupported or invalid command?";
+    case 1: 
+        /* 
+         * This cause indicates that the destination requested by the Mobile 
+         * Station cannot be reached because, although the number is in a 
+         * valid format, it is not currently assigned (allocated).
+         */
+        return "Unassigned (unallocated) number (+CMS) or No connection to phone (+CME)";
+    case 2:
+        return "Phone-adaptor link reserved";
+    case 3: 
+        /* 
+         * This can be a lot of things, depending upon the command, but in general
+         * it relates to trying to do a command when no connection exists.
+         */
+        return "Operation not allowed at this time (connection may be required)";
+    case 4: 
+        /* 
+         * This can be a lot of things, depending upon the command, but in general
+         * it relates to invaid parameters being passed.
+         */
+        return "Operation / Parameter(s) not supported";
+    case 5: 
+        return "PH-SIM PIN required";
     case 8:
+        /*
+         * This cause indicates that the MS has tried to send a mobile originating
+         * short message when the MS's network operator or service provider has
+         * forbidden such transactions.
+         */
         return "Operator determined barring";
     case 10:
-        return "Call barred";
+        /*
+         * This cause indicates that the outgoing call barred service applies to
+         * the short message service for the called destination.
+         */
+        return "Call barred (+CMS) or SIM not inserted or Card inserted is not a SIM (+CME)";
+    case 11:
+        return "SIM PIN required";
+    case 12:
+        return "SIM PUK required";
+    case 13:
+        return "SIM failure";
+    case 14:
+        return "SIM busy";
+    case 15:
+        return "SIM wrong";
+    case 16:
+        return "Incorrect password";
+    case 17:
+        /*
+         * This cause is sent to the MS if the MSC cannot service an MS generated
+         * request because of PLMN failures, e.g. problems in MAP.
+         */
+        return "Network failure (+CMS) or SIM PIN2 required (+CME)";
+    case 18:
+        return "SIM PUK2 required";
+    case 20:
+        return "Memory full";
     case 21:
-        return "Short message transfer rejected";
+        /*
+         * This cause indicates that the equipment sending this cause does not 
+         * wish to accept this short message, although it could have accepted 
+         * the short message since the equipment sending this cause is neither 
+         * busy nor incompatible.
+         */
+        return "Short message transfer rejected (+CMS) or Invalid Index (+CME)";
+    case 22:
+        /*
+         * This cause is sent if the service request cannot be actioned because 
+         * of congestion (e.g. no channel, facility busy/congested etc.). Or 
+         * this cause indicates that the mobile station cannot store the 
+         * incoming short message due to lack of storage capacity.
+         */
+        return "Congestion (+CMS) or Memory capacity exceeded (+CME)";
+    case 23:
+        return "Memory failure";
+    case 24:
+        return "Text string too long"; /* +CPBW, +CPIN, +CPIN2, +CLCK, +CPWD */
+    case 25:
+        return "Invalid characters in text string";
+    case 26:
+        return "Dial string too long"; /* +CPBW, ATD, +CCFC */
     case 27:
+        /*
+         * This cause indicates that the destination indicated by the Mobile 
+         * Station cannot be reached because the interface to the destination 
+         * is not functioning correctly. The term "not functioning correctly" 
+         * indicates that a signalling message was unable to be delivered to 
+         * the remote user; e.g., a physical layer or data link layer failure 
+         * at the remote user, user equipment off-line, etc.
+         * Also means "Invalid characters in dial string" for +CPBW.
+         */
         return "Destination out of service";
     case 28:
+        /*
+         * This cause indicates that the subscriber is not registered in the PLMN 
+         * (i.e. IMSI not known).
+         */
         return "Unidentified subscriber";
     case 29:
+        /*
+         * This cause indicates that the facility requested by the Mobile Station 
+         * is not supported by the PLMN.
+         */
         return "Facility rejected";
     case 30:
-        return "Unknown subscriber";
+        /*
+         * This cause indicates that the subscriber is not registered in the HLR 
+         * (i.e. IMSI or directory number is not allocated to a subscriber).
+         * Also means "No network service" for +VTS, +COPS=?, +CLCK, +CCFC, +CCWA, +CUSD
+         */
+        return "Unknown subscriber (+CMS) or No network service (+CME)";
+    case 31:
+        return "Network timeout";
+    case 32:
+        return "Network not allowed - emergency calls only"; /* +COPS */
     case 38:
+        /*
+         * This cause indicates that the network is not functioning correctly and 
+         * that the condition is likely to last a relatively long period of time; 
+         * e.g., immediately reattempting the short message transfer is not 
+         * likely to be successful.
+         */
         return "Network out of order";
+    case 40:
+        return "Network personal PIN required (Network lock)";
     case 41:
-        return "Temporary failure";
+        /*
+         * This cause indicates that the network is not functioning correctly and 
+         * that the condition is not likely to last a long period of time; e.g., 
+         * the Mobile Station may wish to try another short message transfer 
+         * attempt almost immediately.
+         */
+        return "Temporary failure (+CMS) or Network personalization PUK required (+CME)";
     case 42:
-        return "Congestion";
+        /*
+         * This cause indicates that the short message service cannot be serviced 
+         * because of high traffic.
+         */
+        return "Congestion (+CMS) or Network subset personalization PIN required (+CME)";
+    case 43:
+        return "Network subset personalization PUK required";
+    case 44:
+        return "Service provider personalization PIN required";
+    case 45:
+        return "Service provider personalization PUK required";
+    case 46:
+        return "Corporate personalization PIN required";
     case 47:
-        return "Resources unavailable, unspecified";
+        /*
+         * This cause is used to report a resource unavailable event only when no 
+         * other cause applies.
+         */
+        return "Resources unavailable, unspecified (+CMS) or Corporate personalization PUK required (+CME)";
     case 50:
+        /*
+         * This cause indicates that the requested short message service could not
+         * be provided by the network because the user has not completed the 
+         * necessary administrative arrangements with its supporting networks.
+         */
         return "Requested facility not subscribed";
     case 69:
+        /*
+         * This cause indicates that the network is unable to provide the 
+         * requested short message service.
+         */
         return "Requested facility not implemented";
     case 81:
+        /*
+         * This cause indicates that the equipment sending this cause has received
+         * a message with a short message reference which is not currently in use 
+         * on the MS-network interface.
+         */
         return "Invalid short message transfer reference value";
     case 95:
+        /*
+         * This cause is used to report an invalid message event only when no 
+         * other cause in the invalid message class applies.
+         */
         return "Invalid message, unspecified";
     case 96:
+        /*
+         * This cause indicates that the equipment sending this cause has received
+         * a message where a mandatory information element is missing and/or has 
+         * a content error (the two cases are indistinguishable).
+         */
         return "Invalid mandatory information";
     case 97:
+        /*
+         * This cause indicates that the equipment sending this cause has received
+         * a message with a message type it does not recognize either because this
+         * is a message not defined or defined but not implemented by the 
+         * equipment sending this cause.
+         */
         return "Message type non-existent or not implemented";
     case 98:
+        /*
+         * This cause indicates that the equipment sending this cause has received
+         * a message such that the procedures do not indicate that this is a 
+         * permissible message to receive while in the short message transfer 
+         * state.
+         */
         return "Message not compatible with short message protocol state";
     case 99:
+        /*
+         * This cause indicates that the equipment sending this cause has received
+         * a message which includes information elements not recognized because 
+         * the information element identifier is not defined or it is defined 
+         * but not implemented by the equipment sending the cause. However, the 
+         * information element is not required to be present in the message in 
+         * order for the equipment sending the cause to process the message.
+         */
         return "Information element non-existent or not implemented";
+    case 100:
+        return "Unknown";
+    case 103:
+        return "Illegal MS (#3)"; /* +CGATT */
+    case 106:
+        return "Illegal ME (#6)"; /* +CGATT */
+    case 107:
+        return "GPRS services not allowed (#7)"; /* +CGATT */
     case 111:
-        return "Protocol error, unspecified";
+        /*
+         * This cause is used to report a protocol error event only when no other 
+         * cause applies.
+         * Also means "PLMN not allowed (#11)" for +CGATT
+         */
+        return "Protocol error, unspecified (+CMS) or PLMN not allowed (#11) (+CME)";
+    case 112:
+        return "Location area not allowed (#12)"; /* +CGATT */
+    case 113:
+        return "Roaming not allowed in this area (#13)"; /* +CGATT */
     case 127:
+        /*
+         * This cause indicates that there has been interworking with a network 
+         * which does not provide causes for actions it takes; thus, the precise 
+         * cause for a message which is being send cannot be ascertained.
+         */
         return "Interworking, unspecified";
     case 128:
         return "Telematic interworking not supported";
@@ -2943,18 +3169,30 @@ static const char *at2_error_string(int code)
         return "Short message Type 0 not supported";
     case 130:
         return "Cannot replace short message";
+    case 132:
+        return "Service option not supported (#32)"; /* +CGACT +CGDATA ATD*99 */
+    case 133:
+        return "Requested service option not subscribed (#33)"; /* +CGACT +CGDATA ATD*99 */
+    case 134:
+        return "Service option temporarily out of order (#34)"; /* +CGACT +CGDATA ATD*99 */
     case 143:
         return "Unspecified TP-PID error";
     case 144:
-        return "Data coding scheme (alphabet not supported";
+        return "Data coding scheme (alphabet) not supported";
     case 145:
         return "Message class not supported";
+    case 148:
+        return "Unspecified GPRS error";
+    case 149:
+        return "PDP authentication failure"; /* +CGACT +CGDATA ATD*99 */
+    case 150:
+        return "Invalid mobile class";
     case 159:
         return "Unspecified TP-DCS error";
     case 160:
         return "Command cannot be actioned";
     case 161:
-        return "Command unsupported";
+        return "Unsupported command";
     case 175:
         return "Unspecified TP-Command error";
     case 176:
@@ -2976,13 +3214,13 @@ static const char *at2_error_string(int code)
     case 199:
         return "TP-VP not supported";
     case 208:
-        return "D0 SIM SMS storage full";
+        return "DO SIM SMS storage full";
     case 209:
         return "No SMS storage capability in SIM";
     case 210:
         return "Error in MS";
     case 211:
-        return "D0 SIM SMS storage full";
+        return "SIM Memory Capacity Exceeded";
     case 212:
         return "SIM Application Toolkit Busy";
     case 213:
@@ -2990,55 +3228,145 @@ static const char *at2_error_string(int code)
     case 255:
         return "Unspecified error cause";
     case 300:
-        return "ME failure";
+        /*
+         * Mobile equipment refers to the mobile device that communicates with
+         * the wireless network. Usually it is a mobile phone or GSM/GPRS modem.
+         * The SIM card is defined as a separate entity and is not part of mobile equipment.
+         */
+        return "Mobile equipment (ME) failure";
     case 301:
-        return "SMS service of ME reserved";
+        /*
+         * See +CMS error code 300 for the meaning of mobile equipment. 
+         */
+        return "SMS service of mobile equipment (ME) is reserved";
     case 302:
-        return "Operation not allowed";
+        return "The operation to be done by the AT command is not allowed";
     case 303:
-        return "Operation not supported";
+        return "The operation to be done by the AT command is not supported";
     case 304:
-        return "Invalid PDU mode parameter";
+        return "One or more parameter values assigned to the AT command are invalid";
     case 305:
-        return "Invalid text mode parameter";
+        return "One or more parameter values assigned to the AT command are invalid";
     case 310:
-        return "SIM not inserted";
+        return "There is no SIM card";
     case 311:
-        return "SIM PIN required";
+        /*
+         * The AT command +CPIN (command name in text: Enter PIN)
+         * can be used to send the PIN to the SIM card.
+         */
+        return "The SIM card requires a PIN to operate";
     case 312:
-        return "PH-SIM PIN required";
+        /*
+         * The AT command +CPIN (command name in text: Enter PIN)
+         * can be used to send the PH-SIM PIN to the SIM card.
+         */           
+        return "The SIM card requires a PH-SIM PIN to operate";
     case 313:
-        return "SIM failure";
+        return "SIM card failure";
     case 314:
-        return "SIM busy";
+        return "The SIM card is busy";
     case 315:
-        return "SIM wrong";
+        return "The SIM card is wrong";
     case 316:
-        return "SIM PUK required";
+        /*
+         * The AT command +CPIN (command name in text: Enter PIN)
+         * can be used to send the PUK to the SIM card.
+         */
+        return "The SIM card requires a PUK to operate";
     case 317:
-        return "SIM PIN2 required";
+        return "The SIM card requires a PIN2 to operate";
     case 318:
-        return "SIM PUK2 required";
+        return "The SIM card requires a PUK2 to operate";
     case 320:
-        return "Memory failure";
+        return "Memory/message storage failure";
     case 321:
-        return "Invalid memory index -> don't worry, just memory fragmentation.";
+        return "The memory/message storage index assigned to the AT command is invalid";
     case 322:
-        return "Memory full";
+        return "The memory/message storage is out of space";
     case 330:
-        return "SMSC address unknown";
+        return "The SMS center (SMSC) address is unknown";
     case 331:
-        return "No network service";
+        return "No network service is available";
     case 332:
-        return "Network timeout";
+        return "Network timeout occurred";
     case 340:
-        return "NO +CNMA ACK EXPECTED";
+        return "There is no need to send message ack by the AT command +CNMA";
     case 500:
-        return "Unknown error. -> maybe Sim storage is full? I'll have a look at it.";
+        return "An unknown error occurred";
     case 512:
-        return "User abort";
+        /*
+         * Resulting from +CMGS, +CMSS
+         */
+        return "User abort or MM establishment failure (SMS)";
+    case 513:
+        /*
+         * Resulting from +CMGS, +CMSS
+         */
+       return "Lower layer falure (SMS)";
+    case 514:
+        /*
+         * Resulting from +CMGS, +CMSS
+         */
+        return "CP error (SMS)";
+    case 515:
+        return "Please wait, service not available, init or command in progress";
+    case 517:
+        /*
+         * Resulting from +STGI
+         */
+        return "SIM ToolKit facility not supported";
+    case 518:
+        /*
+         * Resulting from +STGI
+         */
+        return "SIM ToolKit indication not received";
+    case 519:
+        /*
+         * Resulting from +ECHO, +VIP
+         */
+        return "Reset the product to activate or change a new echo cancellation algorithm";
+    case 520:
+        /*
+         * Resulting from +COPS=?
+         */
+        return "Automatic abort about get plmn list for an incoming call";
+    case 526:
+        /*
+         * Resulting from +CLCK
+         */
+        return "PIN deactivation forbidden with this SIM card";
+    case 527:
+        /*
+         * Resulting from +COPS
+         */
+        return "Please wait, RR or MM is busy. Retry your selection later";
+    case 528:
+        /*
+         * Resulting from +COPS
+         */
+        return "Location update failure. Emergency calls only";
+    case 529:
+        /*
+         * Resulting from +COPS
+         */
+        return "PLMN selection failure. Emergency calls only";
+    case 531:
+        /*
+         * Resulting from +CMGS, +CMSS
+         */
+        return "SMS not sent: the <da> is not in FDN phonebook, and FDN lock is enabled";
+    case 532:
+        /*
+         * Resulting from +WOPEN
+         */
+        return "The embedded application is activated so the objects flash are not erased";
+    case 533:
+        /*
+         * Resulting from +ATD*99,+GACT,+CGDATA
+         */
+        return "Missing or unknown APN";
     default:
-        return "Error number unknown. Ask google and add it.";
+        return "Error number unknown. Ask google and add it";
     }
 }
 

@@ -129,8 +129,37 @@
 
 #define DEFAULT_CHARSET "UTF-8"
 
+/*
+ * This maps fields to values for MO parameters
+ */
+typedef struct fieldmap {
+    Octstr *username;
+    Octstr *password;
+    Octstr *from;
+    Octstr *to;
+    Octstr *text;
+    Octstr *udh;
+    Octstr *service;
+    Octstr *account;
+    Octstr *binfo;
+    Octstr *dlr_mask;
+    Octstr *dlr_url;
+    Octstr *dlr_mid;
+    Octstr *flash;
+    Octstr *mclass;
+    Octstr *mwi;
+    Octstr *coding;
+    Octstr *validity;
+    Octstr *deferred;
+    Octstr *foreign_id;
+    Octstr *message_sent;
+    long status_sent;
+    long status_error;
+} FieldMap;
+
 typedef struct conndata {
     HTTPCaller *http_ref;
+    FieldMap *fieldmap;
     long receive_thread;
     long send_cb_thread;
     int shutdown;
@@ -156,6 +185,10 @@ typedef struct conndata {
     regex_t *permfail_regex;
     regex_t *tempfail_regex;
 
+    /* Compiled regex for the 'generic' type to get the foreign message id
+    * from the HTTP response body */
+    regex_t *generic_foreign_id_regex;
+
     /* callback functions set by HTTP-SMSC type */
     void (*send_sms) (SMSCConn *conn, Msg *msg);
     void (*parse_reply) (SMSCConn *conn, Msg *msg, int status,
@@ -163,6 +196,37 @@ typedef struct conndata {
     void (*receive_sms) (SMSCConn *conn, HTTPClient *client,
                          List *headers, Octstr *body, List *cgivars);
 } ConnData;
+
+
+/*
+ * Destroys the FieldMap structure
+ */
+static void fieldmap_destroy(FieldMap *fieldmap)
+{
+    if (fieldmap == NULL)
+        return;
+    octstr_destroy(fieldmap->username);
+    octstr_destroy(fieldmap->password);
+    octstr_destroy(fieldmap->from);
+    octstr_destroy(fieldmap->to);
+    octstr_destroy(fieldmap->text);
+    octstr_destroy(fieldmap->udh);
+    octstr_destroy(fieldmap->service);
+    octstr_destroy(fieldmap->account);
+    octstr_destroy(fieldmap->binfo);
+    octstr_destroy(fieldmap->dlr_mask);
+    octstr_destroy(fieldmap->dlr_url);
+    octstr_destroy(fieldmap->dlr_mid);
+    octstr_destroy(fieldmap->flash);
+    octstr_destroy(fieldmap->mclass);
+    octstr_destroy(fieldmap->mwi);
+    octstr_destroy(fieldmap->coding);
+    octstr_destroy(fieldmap->validity);
+    octstr_destroy(fieldmap->deferred);
+    octstr_destroy(fieldmap->foreign_id);
+    octstr_destroy(fieldmap->message_sent);
+    gw_free(fieldmap);
+}
 
 
 static void conndata_destroy(ConnData *conndata)
@@ -177,6 +241,9 @@ static void conndata_destroy(ConnData *conndata)
         gw_regex_destroy(conndata->permfail_regex);
     if (conndata->tempfail_regex)
         gw_regex_destroy(conndata->tempfail_regex);
+    if (conndata->generic_foreign_id_regex)
+        gw_regex_destroy(conndata->generic_foreign_id_regex);
+    fieldmap_destroy(conndata->fieldmap);
     octstr_destroy(conndata->allow_ip);
     octstr_destroy(conndata->send_url);
     octstr_destroy(conndata->dlr_url);
@@ -569,7 +636,7 @@ static void kannel_receive_sms(SMSCConn *conn, HTTPClient *client,
               octstr_get_cstr(conn->id));
         retmsg = octstr_create("Authorization failed for sendsms");
     }
-    else if (dlrurl != NULL && dlrmask != 0 && dlrmid != NULL) {
+    else if (dlrmask != 0 && dlrmid != NULL) {
         /* we got a DLR, and we don't require additional values */
         Msg *dlrmsg;
         
@@ -1454,19 +1521,13 @@ static void wapme_smsproxy_parse_reply(SMSCConn *conn, Msg *msg, int status,
 
 
 /*----------------------------------------------------------------
- * (Semi-)generic HTTP interface
+ * Generic HTTP interface
  *
  * This 'generic' type will handle the 'send-url' directive in the 
  * group the same way the 'sms-service' for smsbox does, via 
  * URLTranslation. Response interpretation is based on the three
  * regex value that match against the reponse body. The HTTP reponse
  * code is not obeyed.
- * 
- * It handles mainly MT messages, due to the fact that MO traffic
- * can't be abstracted in a universal way. Therefor we use the
- * Kannel sendsms interface layout as generic fallback. So if your
- * SMSC provider needs to send MO messages, he needs to implement
- * the Kannel sendsms HTTP interface variables.
  * 
  * Example config group:
  * 
@@ -1477,12 +1538,268 @@ static void wapme_smsproxy_parse_reply(SMSCConn *conn, Msg *msg, int status,
  *  status-success-regex = "ok"
  *  status-permfail-regex = "failure"
  *  status-tempfail-regex = "retry later"
+ *  generic-foreign-id-regex = "<id>(.+)</id>"
+ *  generic-param-from = "phoneNumber"
+ *  generic-param-to = "shortCode"
+ *  generic-param-text = "message"
+ *  generic-message-sent = "OK"
+ *  generic-status-sent = 200
+ *  generic-status-error = 400
  * 
  * Note that neither 'smsc-username' nor 'smsc-password' is required,
  * since they are coded into the the 'send-url' value directly. 
  * 
  * Stipe Tolj <st@tolj.org>
+ *
+ * MO processing by Alejandro Guerrieri <aguerrieri at kannel dot org>
  */
+
+/*
+ * Get the FieldMap struct to map MO parameters
+ */
+static FieldMap *generic_get_field_map(CfgGroup *grp)
+{
+    FieldMap *fm = NULL;
+    fm = gw_malloc(sizeof(FieldMap));
+    gw_assert(fm != NULL);
+    fm->username = cfg_get(grp, octstr_imm("generic-param-username"));
+    if (fm->username == NULL)
+        fm->username = octstr_create("username");
+    fm->password = cfg_get(grp, octstr_imm("generic-param-password"));
+    if (fm->password == NULL)
+        fm->password = octstr_create("password");
+    fm->from = cfg_get(grp, octstr_imm("generic-param-from"));
+    if (fm->from == NULL)
+        fm->from = octstr_create("from");
+    fm->to = cfg_get(grp, octstr_imm("generic-param-to"));
+    if (fm->to == NULL)
+        fm->to = octstr_create("to");
+    fm->text = cfg_get(grp, octstr_imm("generic-param-text"));
+    if (fm->text == NULL)
+        fm->text = octstr_create("text");
+    fm->udh = cfg_get(grp, octstr_imm("generic-param-udh"));
+    if (fm->udh == NULL)
+        fm->udh = octstr_create("udh");
+    /* "service" preloads the "username" parameter to mimic former behaviour */
+    fm->service = cfg_get(grp, octstr_imm("generic-param-service"));
+    if (fm->service == NULL)
+        fm->service = octstr_create("username");
+    fm->account = cfg_get(grp, octstr_imm("generic-param-account"));
+    if (fm->account == NULL)
+        fm->account = octstr_create("account");
+    fm->binfo = cfg_get(grp, octstr_imm("generic-param-binfo"));
+    if (fm->binfo == NULL)
+        fm->binfo = octstr_create("binfo");
+    fm->dlr_mask = cfg_get(grp, octstr_imm("generic-param-dlr-mask"));
+    if (fm->dlr_mask == NULL)
+        fm->dlr_mask = octstr_create("dlr-mask");
+    fm->dlr_url = cfg_get(grp, octstr_imm("generic-param-dlr-url"));
+    if (fm->dlr_url == NULL)
+        fm->dlr_url = octstr_create("dlr-url");
+    fm->dlr_mid = cfg_get(grp, octstr_imm("generic-param-dlr-mid"));
+    if (fm->dlr_mid == NULL)
+        fm->dlr_mid = octstr_create("dlr-mid");
+    fm->flash = cfg_get(grp, octstr_imm("generic-param-flash"));
+    if (fm->flash == NULL)
+        fm->flash = octstr_create("flash");
+    fm->mclass = cfg_get(grp, octstr_imm("generic-param-mclass"));
+    if (fm->mclass == NULL)
+        fm->mclass = octstr_create("mclass");
+    fm->mwi = cfg_get(grp, octstr_imm("generic-param-mwi"));
+    if (fm->mwi == NULL)
+        fm->mwi = octstr_create("mwi");
+    fm->coding = cfg_get(grp, octstr_imm("generic-param-coding"));
+    if (fm->coding == NULL)
+        fm->coding = octstr_create("coding");
+    fm->validity = cfg_get(grp, octstr_imm("generic-param-validity"));
+    if (fm->validity == NULL)
+        fm->validity = octstr_create("validity");
+    fm->deferred = cfg_get(grp, octstr_imm("generic-param-deferred"));
+    if (fm->deferred == NULL)
+        fm->deferred = octstr_create("deferred");
+    fm->foreign_id = cfg_get(grp, octstr_imm("generic-param-foreign-id"));
+    if (fm->foreign_id == NULL)
+        fm->foreign_id = octstr_create("foreign-id");
+    fm->message_sent = cfg_get(grp, octstr_imm("generic-message-sent"));
+    if (fm->message_sent == NULL)
+        fm->message_sent = octstr_create("Sent");
+    /* both success and error uses HTTP_ACCEPTED to mimic former behaviour */
+    if (cfg_get_integer(&fm->status_sent, grp, octstr_imm("generic-status-sent")) == -1) {
+        fm->status_sent = HTTP_ACCEPTED;
+    }
+    if (cfg_get_integer(&fm->status_error, grp, octstr_imm("generic-status-error")) == -1) {
+        fm->status_error = HTTP_ACCEPTED;
+    }
+
+    return fm;
+}
+
+static void generic_receive_sms(SMSCConn *conn, HTTPClient *client,
+                               List *headers, Octstr *body, List *cgivars)
+{
+    ConnData *conndata = conn->data;
+    FieldMap *fm = conndata->fieldmap;
+    Octstr *user, *pass, *from, *to, *text, *udh, *account, *binfo;
+    Octstr *dlrurl, *dlrmid;
+    Octstr *tmp_string, *retmsg;
+    int	mclass, mwi, coding, validity, deferred, dlrmask;
+    List *reply_headers;
+    int ret, retstatus;
+
+    mclass = mwi = coding = validity =
+        deferred = dlrmask = SMS_PARAM_UNDEFINED;
+
+    /* Parse enough parameters to validate the request */
+    user = http_cgi_variable(cgivars, octstr_get_cstr(fm->username));
+    pass = http_cgi_variable(cgivars, octstr_get_cstr(fm->password));
+    from = http_cgi_variable(cgivars, octstr_get_cstr(fm->from));
+    to = http_cgi_variable(cgivars, octstr_get_cstr(fm->to));
+    text = http_cgi_variable(cgivars, octstr_get_cstr(fm->text));
+    udh = http_cgi_variable(cgivars, octstr_get_cstr(fm->udh));
+    dlrurl = http_cgi_variable(cgivars, octstr_get_cstr(fm->dlr_url));
+    dlrmid = http_cgi_variable(cgivars, octstr_get_cstr(fm->dlr_mid));
+    tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->dlr_mask));
+    if (tmp_string) {
+        sscanf(octstr_get_cstr(tmp_string),"%d", &dlrmask);
+    }
+    debug("smsc.http.generic", 0, "HTTP[%s]: Received an HTTP request",
+          octstr_get_cstr(conn->id));
+
+    if ((conndata->username != NULL && conndata->password != NULL) &&
+        (user == NULL || pass == NULL ||
+        octstr_compare(user, conndata->username) != 0 ||
+        octstr_compare(pass, conndata->password) != 0)) {
+        error(0, "HTTP[%s]: Authorization failure",
+              octstr_get_cstr(conn->id));
+        retmsg = octstr_create("Authorization failed for sendsms");
+        retstatus = fm->status_error;
+    }
+    else if (dlrmask != 0 && dlrmid != NULL) {
+        /* we got a DLR, and we don't require additional values */
+        Msg *dlrmsg;
+
+        dlrmsg = dlr_find(conn->id,
+            dlrmid, /* message id */
+            to, /* destination */
+            dlrmask);
+
+        if (dlrmsg != NULL) {
+            dlrmsg->sms.sms_type = report_mo;
+
+            debug("smsc.http.generic", 0, "HTTP[%s]: Received DLR for DLR-URL <%s>",
+                  octstr_get_cstr(conn->id), octstr_get_cstr(dlrmsg->sms.dlr_url));
+
+            Msg *resp = msg_duplicate(dlrmsg);
+            ret = bb_smscconn_receive(conn, dlrmsg);
+            if (ret == -1) {
+                retmsg = octstr_create("Not accepted");
+                retstatus = fm->status_error;
+            } else {
+                retmsg = urltrans_fill_escape_codes(fm->message_sent, resp);
+                retstatus = fm->status_sent;
+            }
+            msg_destroy(resp);
+        } else {
+            error(0,"HTTP[%s]: Got DLR but could not find message or was not interested "
+                  "in it id<%s> dst<%s>, type<%d>",
+                  octstr_get_cstr(conn->id), octstr_get_cstr(dlrmid),
+                  octstr_get_cstr(to), dlrmask);
+            retmsg = octstr_create("Unknown DLR, not accepted");
+            retstatus = fm->status_error;
+        }
+    }
+    else if (from == NULL || to == NULL || text == NULL) {
+        error(0, "HTTP[%s]: Insufficient args",
+              octstr_get_cstr(conn->id));
+        retmsg = octstr_create("Insufficient args, rejected");
+        retstatus = fm->status_error;
+    }
+    else if (udh != NULL && (octstr_len(udh) != octstr_get_char(udh, 0) + 1)) {
+        error(0, "HTTP[%s]: UDH field misformed, rejected",
+              octstr_get_cstr(conn->id));
+        retmsg = octstr_create("UDH field misformed, rejected");
+        retstatus = fm->status_error;
+    }
+    else if (udh != NULL && octstr_len(udh) > MAX_SMS_OCTETS) {
+        error(0, "HTTP[%s]: UDH field is too long, rejected",
+              octstr_get_cstr(conn->id));
+        retmsg = octstr_create("UDH field is too long, rejected");
+        retstatus = fm->status_error;
+    }
+    else {
+        /* we got a normal MO SMS */
+        Msg *msg;
+        msg = msg_create(sms);
+
+        /* Parse the rest of the parameters */
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->flash));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.mclass);
+        }
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->mclass));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.mclass);
+        }
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->mwi));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.mwi);
+        }
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->coding));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.coding);
+        }
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->validity));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.validity);
+        }
+        tmp_string = http_cgi_variable(cgivars, octstr_get_cstr(fm->deferred));
+        if (tmp_string) {
+            sscanf(octstr_get_cstr(tmp_string),"%ld", &msg->sms.deferred);
+        }
+        account = http_cgi_variable(cgivars, octstr_get_cstr(fm->account));
+        binfo = http_cgi_variable(cgivars, octstr_get_cstr(fm->binfo));
+
+        debug("smsc.http.generic", 0, "HTTP[%s]: Constructing new SMS",
+              octstr_get_cstr(conn->id));
+
+        /* convert character encoding if required */
+        if (conndata->alt_charset &&
+            charset_convert(text, octstr_get_cstr(conndata->alt_charset),
+                    DEFAULT_CHARSET) != 0)
+            error(0, "Failed to convert msgdata from charset <%s> to <%s>, will leave it as it is.",
+                    octstr_get_cstr(conndata->alt_charset), DEFAULT_CHARSET);
+
+        msg->sms.service = octstr_duplicate(user);
+        msg->sms.sender = octstr_duplicate(from);
+        msg->sms.receiver = octstr_duplicate(to);
+        msg->sms.msgdata = octstr_duplicate(text);
+        msg->sms.udhdata = octstr_duplicate(udh);
+        msg->sms.smsc_id = octstr_duplicate(conn->id);
+        msg->sms.time = time(NULL);
+        msg->sms.account = octstr_duplicate(account);
+        msg->sms.binfo = octstr_duplicate(binfo);
+        Msg *resp = msg_duplicate(msg);
+        ret = bb_smscconn_receive(conn, msg);
+        if (ret == -1) {
+            retmsg = octstr_create("Not accepted");
+            retstatus = fm->status_error;
+        } else {
+            retmsg = urltrans_fill_escape_codes(fm->message_sent, resp);
+            retstatus = fm->status_sent;
+        }
+        msg_destroy(resp);
+    }
+
+    reply_headers = gwlist_create();
+    http_header_add(reply_headers, "Content-Type", "text/plain");
+    debug("smsc.http.generic", 0, "HTTP[%s]: Sending reply",
+          octstr_get_cstr(conn->id));
+    http_send_reply(client, retstatus, reply_headers, retmsg);
+
+    octstr_destroy(retmsg);
+    http_destroy_headers(reply_headers);
+}
+
 
 static void generic_send_sms(SMSCConn *conn, Msg *sms)
 {
@@ -1509,8 +1826,8 @@ static void generic_parse_reply(SMSCConn *conn, Msg *msg, int status,
                                 List *headers, Octstr *body)
 {
     ConnData *conndata = conn->data;
-    size_t n_match = 1;
-    regmatch_t p_match[10];
+    regmatch_t pmatch[2];
+    Octstr *msgid = NULL;
     
     /* 
      * Our generic type checks only content on the HTTP reponse body.
@@ -1518,17 +1835,31 @@ static void generic_parse_reply(SMSCConn *conn, Msg *msg, int status,
      * This is the most generic criteria (at the moment). 
      */
     if ((conndata->success_regex != NULL) && 
-        (gw_regex_exec(conndata->success_regex, body, n_match, p_match, 0) == 0)) {
+        (gw_regex_exec(conndata->success_regex, body, 0, NULL, 0) == 0)) {
+        /* SMSC ACK... the message id should be in the body */
+        if ((conndata->generic_foreign_id_regex != NULL) && DLR_IS_ENABLED_DEVICE(msg->sms.dlr_mask)) {
+            if (gw_regex_exec(conndata->generic_foreign_id_regex, body, sizeof(pmatch) / sizeof(regmatch_t), pmatch, 0) == 0) {
+                if (pmatch[1].rm_so != -1 && pmatch[1].rm_eo != -1) {
+                    msgid = octstr_copy(body, pmatch[1].rm_so, pmatch[1].rm_eo - pmatch[1].rm_so);
+                    debug("smsc.http.generic", 0, "HTTP[%s]: Found foreign message id <%s> in body.", octstr_get_cstr(conn->id), octstr_get_cstr(msgid));
+                    dlr_add(conn->id, msgid, msg);
+                }
+            }
+            if (msgid == NULL)
+                warning(0, "HTTP[%s]: Can't get the foreign message id from the HTTP body.", octstr_get_cstr(conn->id));
+            else
+                octstr_destroy(msgid);
+        }
         bb_smscconn_sent(conn, msg, NULL);
     } 
     else if ((conndata->permfail_regex != NULL) &&        
-        (gw_regex_exec(conndata->permfail_regex, body, n_match, p_match, 0) == 0)) {
+        (gw_regex_exec(conndata->permfail_regex, body, 0, NULL, 0) == 0)) {
         error(0, "HTTP[%s]: Message not accepted.", octstr_get_cstr(conn->id));
         bb_smscconn_send_failed(conn, msg,
             SMSCCONN_FAILED_MALFORMED, octstr_duplicate(body));
     }
     else if ((conndata->tempfail_regex != NULL) &&        
-        (gw_regex_exec(conndata->tempfail_regex, body, n_match, p_match, 0) == 0)) {
+        (gw_regex_exec(conndata->tempfail_regex, body, 0, NULL, 0) == 0)) {
         warning(0, "HTTP[%s]: Message temporary not accepted, will retry.", 
                 octstr_get_cstr(conn->id));
         bb_smscconn_send_failed(conn, msg,
@@ -1623,6 +1954,7 @@ int smsc_http_create(SMSCConn *conn, CfgGroup *cfg)
     conndata->http_ref = NULL;
     conndata->success_regex = 
         conndata->permfail_regex = conndata->tempfail_regex = NULL;
+    conndata->generic_foreign_id_regex = NULL;
 
     conndata->allow_ip = cfg_get(cfg, octstr_imm("connect-allow-ip"));
     conndata->send_url = cfg_get(cfg, octstr_imm("send-url"));
@@ -1635,6 +1967,7 @@ int smsc_http_create(SMSCConn *conn, CfgGroup *cfg)
     cfg_get_bool(&conndata->no_sep, cfg, octstr_imm("no-sep"));
     conndata->proxy = cfg_get(cfg, octstr_imm("system-id"));
     conndata->alt_charset = cfg_get(cfg, octstr_imm("alt-charset"));
+    conndata->fieldmap = NULL;
 
     if (conndata->send_url == NULL)
         panic(0, "HTTP[%s]: Sending not allowed. No 'send-url' specified.",
@@ -1693,24 +2026,35 @@ int smsc_http_create(SMSCConn *conn, CfgGroup *cfg)
                   octstr_get_cstr(conn->id));
             goto error;
         }
-        conndata->receive_sms = kannel_receive_sms; /* emulate sendsms interface */
+        conndata->fieldmap = generic_get_field_map(cfg);
+        conndata->receive_sms = generic_receive_sms; /* emulate sendsms interface */
         conndata->send_sms = generic_send_sms;
         conndata->parse_reply = generic_parse_reply;
 
         /* pre-compile regex expressions */
         if (os != NULL) {   /* this is implicite due to the above if check */
-            if ((conndata->success_regex = gw_regex_comp(os, REG_EXTENDED)) == NULL)
-                panic(0, "Could not compile regex pattern '%s'", octstr_get_cstr(os));
+            if ((conndata->success_regex = gw_regex_comp(os, REG_EXTENDED|REG_NOSUB)) == NULL)
+                panic(0, "Could not compile pattern '%s' defined for variable 'status-success-regex'", octstr_get_cstr(os));
             octstr_destroy(os);
         }
         if ((os = cfg_get(cfg, octstr_imm("status-permfail-regex"))) != NULL) {
-            if ((conndata->permfail_regex = gw_regex_comp(os, REG_EXTENDED)) == NULL)
-                panic(0, "Could not compile regex pattern '%s'", octstr_get_cstr(os));
+            if ((conndata->permfail_regex = gw_regex_comp(os, REG_EXTENDED|REG_NOSUB)) == NULL)
+                panic(0, "Could not compile pattern '%s' defined for variable 'status-permfail-regex'", octstr_get_cstr(os));
             octstr_destroy(os);
         }
         if ((os = cfg_get(cfg, octstr_imm("status-tempfail-regex"))) != NULL) {
-            if ((conndata->tempfail_regex = gw_regex_comp(os, REG_EXTENDED)) == NULL)
-                panic(0, "Could not compile regex pattern '%s'", octstr_get_cstr(os));
+            if ((conndata->tempfail_regex = gw_regex_comp(os, REG_EXTENDED|REG_NOSUB)) == NULL)
+                panic(0, "Could not compile pattern '%s' defined for variable 'status-tempfail-regex'", octstr_get_cstr(os));
+            octstr_destroy(os);
+        }
+        if ((os = cfg_get(cfg, octstr_imm("generic-foreign-id-regex"))) != NULL) {
+            if ((conndata->generic_foreign_id_regex = gw_regex_comp(os, REG_EXTENDED)) == NULL)
+                panic(0, "Could not compile pattern '%s' defined for variable 'generic-foreign-id-regex'", octstr_get_cstr(os));
+            else {
+                /* check quickly that at least 1 group seems to be defined in the regex */
+                if (octstr_search_char(os, '(', 0) == -1 || octstr_search_char(os, ')', 0) == -1)
+                    warning(0, "HTTP[%s]: No group defined in pattern '%s' for variable 'generic-foreign-id-regex'", octstr_get_cstr(conn->id), octstr_get_cstr(os));
+            }
             octstr_destroy(os);
         }
     }

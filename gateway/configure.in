@@ -261,7 +261,7 @@ AC_CHECK_FUNC(gethostbyname_r, [ AC_FUNC_WHICH_GETHOSTBYNAME_R ], [
 dnl Extra feature checks
 
 dnl GW_HAVE_TYPE_FROM(HDRNAME, TYPE, HAVENAME, DESCRIPTION)
-AC_DEFUN(GW_HAVE_TYPE_FROM, [
+AC_DEFUN([GW_HAVE_TYPE_FROM], [
 	AC_CACHE_CHECK([for $2 in <$1>], gw_cv_type_$3,
 		AC_TRY_COMPILE([#ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -275,7 +275,7 @@ AC_DEFUN(GW_HAVE_TYPE_FROM, [
 ])
 
 dnl GW_HAVE_FUNC_FROM(HDRNAME, FUNC, HAVENAME, DESCRIPTION)
-AC_DEFUN(GW_HAVE_FUNC_FROM, [
+AC_DEFUN([GW_HAVE_FUNC_FROM], [
 	AC_CACHE_CHECK([for $2 in <$1>], gw_cv_func_$3,
 		AC_TRY_COMPILE([#include <$1>], [void *foo = $2;],
 			gw_cv_func_$3=yes, gw_cv_func_$3=no))
@@ -819,7 +819,7 @@ if test "$ssl" = "yes" ; then
   dnl test only if --with-ssl has not been used
   if test "x$ssllib" = "x" && test "x$sslinc" = "x"; then
     for loc in /usr/lib /usr/lib64 /usr/local/ssl/lib /usr/local/openssl/lib; do
-      if test -f "$loc/libssl.a" -o -f "$loc/libssl.dylib" ; then
+      if test -f "$loc/libssl.a" -o -f "$loc/libssl.so" -o -f "$loc/libssl.dylib" ; then
         ssllib="$loc"
       fi
     done
@@ -1201,6 +1201,38 @@ fi
   AC_MSG_RESULT(disabled)
 ])
 
+dnl Checking for FreeTDS Ct-Lib support
+AC_MSG_CHECKING([whether to compile with FreeTDS Ct-Lib support])
+AC_ARG_WITH(mssql,
+[  --with-mssql[=DIR]        Include FreeTDS Ct-Lib support.  DIR is the FreeTDS
+                          install directory, defaults to /usr/local.], [
+    if test "$withval" = "yes"; then
+        withval=/usr/local
+    fi
+
+    if test "$withval" != "no"; then
+        if test -f $withval/include/ctpublic.h; then
+            MSSQL_INCDIR=$withval/include
+            MSSQL_LIBDIR=$withval/lib
+        else
+            if test -f $withval/include/freetds/ctpublic.h; then
+                MSSQL_INCDIR=$withval/include/freetds
+                MSSQL_LIBDIR=$withval/lib
+            else
+                AC_MSG_RESULT(no)
+                AC_MSG_ERROR(Invalid FreeTDS directory - unable to find ctpublic.h)
+            fi
+        fi
+        LIBS="$LIBS -L$MSSQL_LIBDIR -lct"
+        CFLAGS="$CFLAGS -I$MSSQL_INCDIR"
+        AC_DEFINE(HAVE_MSSQL, 1, [Defined to 1])
+        AC_MSG_RESULT(yes)
+        MSSQL="yes"
+        dnl AC_CHECK_FUNC(dlopen, , AC_CHECK_LIB(dl, dlopen, MSSQL_LFLAGS="$MSSQL_LFLAGS -ldl"))
+    fi
+],[
+    AC_MSG_RESULT(disabled)
+])
 
 
 dnl Implement the --with-wtls option.

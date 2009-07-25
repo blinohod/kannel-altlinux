@@ -614,6 +614,12 @@
 	    Enable using PAM for authentication of sendsms users for
 	    smsbox.</para></listitem>
 
+        <listitem><para><literal>--with-mssql<replaceable>[=DIR]</replaceable></literal>
+
+            Enable using FreeTDS libraries for DBPool and
+            DLR support on MS-SQL and Sybase. Optional DIR specifies where to look for
+            FreeTDS libraries and include files (defaults to /usr/local).</para></listitem>
+
         <listitem><para><literal>--with-mysql</literal>
 
             Enable using MySQL libraries for DBPool and
@@ -1466,9 +1472,10 @@ admin-password = f00bar
      <entry>type</entry>
      <entry valign="bottom">
         Defines the way DLRs are stored. If you have build-in external 
-		  DLR storage support, i.e. using MySQL you may define here the
-		  alternative storage type like 'mysql'. Supported types are:
-		  internal, mysql, oracle. By default this is set to 'internal'.
+          DLR storage support, i.e. using MySQL you may define here the
+          alternative storage type like 'mysql'. Supported types are:
+          internal, mysql, pgsql, sdb, mssql and oracle. By default this
+          is set to 'internal'.
      </entry></row>
 
      <row><entry><literal>maximum-queue-length</literal></entry>
@@ -1910,7 +1917,9 @@ commands never arrive nor can you restart it via WAP anymore.</para>
    <entry valign="bottom">
         Re-start a single SMSC link. Password required. Additionally
 		  the <literal>smsc</literal> parameter must be given to identify
- 		  which <literal>smsc-id</literal> should be re-started.
+ 		  which <literal>smsc-admin-id</literal> should be re-started.
+        The configuration for the SMSC link is re-read from disk before
+        the action is performed.
    </entry></row>
 
   	<row><entry><literal>stop-smsc</literal></entry>
@@ -1918,6 +1927,21 @@ commands never arrive nor can you restart it via WAP anymore.</para>
         Shutdown a single SMSC link. Password required. Additionally
 		  the <literal>smsc</literal> parameter must be given (see above).
    </entry></row>
+
+    <row><entry><literal>add-smsc</literal></entry>
+    <entry valign="bottom">
+        Adds an SMSC link previously removed or created after the service was
+        started. Password required. Additionally the <literal>smsc</literal>
+        parameter must be given (see above).
+    </entry></row>
+
+    <row><entry><literal>remove-smsc</literal></entry>
+    <entry valign="bottom">
+        Removes an existing SMSC link. Password required. Additionally the
+        <literal>smsc</literal> parameter must be given (see above). If you
+        want a permanent removal, you should also remove the entry from the
+        configuration file or it will be recreated after a service restart.
+    </entry></row>
 
 	<row><entry><literal>restart</literal></entry>
    <entry valign="bottom">
@@ -2434,6 +2458,19 @@ secret-nas = radius
 	<literal>preferred-smsc-id</literal> is used for that.
 	If you want to use Delivery Reports, you must define this.
 
+     </entry></row>
+
+   <row><entry><literal>smsc-admin-id</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+        An optional id for the smsc to be used on administrative
+        commands. This allows commands targeted to individual binds
+        even if they share the same <literal>smsc-id</literal>
+        (for load balancing scenarios, for example). Any string is
+        acceptable, but semicolon ';' may cause problems, so avoid
+        it and any other special non-alphabet characters.
+        Several SMSCs can have the same admin-id, though it's not
+        recommended. The name is case-insensitive.
      </entry></row>
 
     <row><entry><literal>throughput</literal></entry>
@@ -3102,6 +3139,12 @@ address-range = ""
        The port number for the TRANSMITTER connection to the SMSC. 
        May be the same as receive-port. 
 		 Use value 0 to disable this I/O thread.
+     </entry></row>
+
+   <row><entry><literal>use-ssl</literal></entry>
+     <entry><literal>bool</literal></entry>
+     <entry valign="bottom">
+        Defines whether we should try to bind with SSL enabled connection.
      </entry></row>
 
    <row><entry><literal>transceiver-mode</literal></entry>
@@ -4060,38 +4103,217 @@ send-url = "http://localhost:20022"
      <entry valign="bottom">
        Password for username, if needed.
      </entry></row>
+   </tbody></tgroup></informaltable>
+
+<sect3>
+<title>The "generic" system-type</title>
+
+   <para>For a generic HTTP-based relay, the system-type 'generic' can be used.
+   It can use the escape codes known from sms-service's get-url config
+   directives in the send-url string to indicate the HTTP API calling style of
+   the remote HTTP server, and the 3 HTTP body response parsing regular
+   expressions 'status-success-regex' for successfull acknowledge,
+   'status-permfail-regex' for permanent failure and 'status-tempfail-regex'
+   for temporary failure. It can also accomodate the incoming parameters and response
+   codes and text. This system-type has a lot of extra parameters that gives it a lot
+   of flexibility:
+   </para>
+
+
+ <informaltable frame="none">
+  <tgroup cols="3"><thead><row>
+     <entry>Variable</entry>
+     <entry>Value</entry>
+     <entry>Description</entry>
+   </row></thead><tbody>
      
    <row><entry><literal>status-success-regex (o)</literal></entry>
      <entry><literal>POSIX regular expression</literal></entry>
      <entry valign="bottom">
-       Regular expression for system-type 'generic' to match against HTTP 
-       response body conent, indicating a successfull submission. 
+       Regular expression to match against HTTP
+       response body content, indicating a successful submission.
      </entry></row>
      
    <row><entry><literal>status-permfail-regex (o)</literal></entry>
      <entry><literal>POSIX regular expression</literal></entry>
      <entry valign="bottom">
-       Regular expression for system-type 'generic' to match against HTTP 
-       response body conent, indicating a permanent failure. 
+       Regular expression to match against HTTP
+       response body content, indicating a permanent failure.
      </entry></row>
 
    <row><entry><literal>status-tempfail-regex (o)</literal></entry>
      <entry><literal>POSIX regular expression</literal></entry>
      <entry valign="bottom">
-       Regular expression for system-type 'generic' to match against HTTP 
-       response body conent, indicating a temporary failure. 
+       Regular expression to match against HTTP
+       response body content, indicating a temporary failure.
+     </entry></row>
+
+   <row><entry><literal>generic-foreign-id-regex (o)</literal></entry>
+     <entry><literal>POSIX regular expression</literal></entry>
+     <entry valign="bottom">
+       Regular expression to match against HTTP
+       response body content to get the foreign message id
+       in case of successful submission.
      </entry></row>
     
+   <row><entry><literal>generic-param-username (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'username'
+       field used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-password (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'password'
+       field used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-from (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'from' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-to (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'to' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-text (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'text' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-udh (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'udh' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-service (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'service' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-account (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'account' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-binfo (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'binfo' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-dlr-mask (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'dlr-mask' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-dlr-url (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'dlr-url' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-dlr-mid (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'dlr-mid' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-flash (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'flash' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-mclass (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'mclass' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-mwi (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'mwi' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-coding (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'coding' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-validity (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'validity' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-deferred (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'deferred' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-param-foreign-id (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'foreign-id' field
+       used on incoming requests.
+     </entry></row>
+
+   <row><entry><literal>generic-message-sent (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       It allows you to set the text returned when a succesful request is made.
+       If not set, defaults to 'Sent.'. Note that you can use all sms service escapes
+       here, see <xref linkend="escapecodes" endterm="escapecodes.title"> for details.
+     </entry></row>
+
+   <row><entry><literal>generic-status-sent (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the HTTP status code returned when a successful
+       request is made. If not set, defaults to 202 (HTTP_ACCEPTED).
+     </entry></row>
+
+   <row><entry><literal>generic-status-error (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the HTTP status code returned when a request is
+       rejected for any reason. If not set, defaults to 202 (HTTP_ACCEPTED).
+     </entry></row>
+
    </tbody></tgroup></informaltable>
 
-   <para>For a generic HTTP-based relay, the system-type 'generic' can be used.
-   It can use the escape codes known from sms-service's get-url config
-   directives in the send-url string to indicate the HTTP API calling style of 
-   the remote HTTP server, and the 3 HTTP body response parsing regular 
-   expressions 'status-success-regex' for successfull acknowledge, 
-   'status-permfail-regex' for permanent failure and 'status-tempfail-regex' 
-   for temporary failure. An example for a 'generic' group looks like this:
-   </para>
+   <para>An example for a 'generic' group looks like this:</para>
 
 <programlisting>
 group = smsc
@@ -4102,14 +4324,14 @@ send-url = "http://www.foobar.com/mt.php?from=%P&amp;to=%p&amp;text=%b"
 status-success-regex = "ok"
 status-permfail-regex = "failure"
 status-tempfail-regex = "retry later"
+generic-foreign-id-regex = "&lt;id&gt;(.+)&lt;/id&gt;"
+generic-param-from = "phoneNumber"
+generic-param-to = "shortCode"
+generic-message-sent = "Message sent with ID: %I"
+generic-status-sent = 200
+generic-status-error = 404
 </programlisting>
-
-  <para>Beware that this generic HTTP system-type is for MT only. We don't
-  provide a way for the MO side too. For MO traffic we simply expect the
-  remote HTTP caller to use Kannel's sendsms HTTP API on the given port to 
-  inject MO messages.
-  </para> 
-  
+</sect3>
 </sect2>
 
 
@@ -5073,6 +5295,49 @@ field-boxc-id = boxc
 	</para>
 
 	</sect2>
+
+    <sect2>
+    <title>MS-SQL/Sybase DLR storage</title>
+    <para>To store DLR information into a MS-SQL or Sybase (via FreeTDS)
+    database you may use the <literal>dlr-storage = mssql</literal>
+    configuration directive in the <literal>core</literal> group.
+    </para>
+    <para>In addition to that you must have a <literal>dlr-db</literal>
+    group defined that specifies the table field names that are used to the
+    DLR attributes and a <literal>mssql-connection</literal> group that
+    defines the connection to the MS-SQL or Sybase server itself.
+    </para>
+    <para>Please note that the <literal>server</literal> configuration directive
+    must match the corresponding <literal>[section]</literal> on
+    <literal>freetds.conf</literal></para>
+    <para>Here is the example configuration:
+
+<programlisting>
+group = mssql-connection
+id = msdlr
+server = myservername
+username = foo
+password = bar
+database = dlr
+max-connections = 1
+
+group = dlr-db
+id = msdlr
+table = dlr
+field-smsc = smsc
+field-timestamp = ts
+field-destination = destination
+field-source = source
+field-service = service
+field-url = url
+field-mask = mask
+field-status = status
+field-boxc-id = boxc
+</programlisting>
+
+    </para>
+
+    </sect2>
 
         <sect2>
 	<title>DLR database field configuration</title>
@@ -6057,8 +6322,8 @@ get-url = "http://%S"
 
 
 
- <table frame="none">
-  <title>Parameters (Escape Codes)</title>
+ <table frame="none" id="escapecodes">
+  <title id="escapecodes.title">Parameters (Escape Codes)</title>
   <tgroup cols="2">
   <tbody>
 
@@ -8405,6 +8670,7 @@ ssl-server-key-file = "/etc/kannel/key1.pem"
 	<listitem><para>4: message buffered</para></listitem>
 	<listitem><para>8: smsc submit</para></listitem>
 	<listitem><para>16: smsc reject</para></listitem>
+	<listitem><para>32: smsc intermediate notifications</para></listitem>
 	</itemizedlist>
 	If you want multiple report types, you simply add the values together. For example if you want to get delivery success and/or failure
 	you set the <literal>dlr-mask</literal> value to 1+2. and so on. If you specify <literal>dlr-mask</literal> on the URL you pass on to
@@ -8414,13 +8680,19 @@ ssl-server-key-file = "/etc/kannel/key1.pem"
 	<para>
 	An example transaction would work as following.
 	<itemizedlist>
-	<listitem><para>1. you send a message using dlr-mask=7 and dlr-url=http://www.xyz.com/cgi/dlr.php?type=%d</para></listitem>
+	<listitem><para>1. you send a message using dlr-mask=7 and dlr-url=http://www.xyz.com/cgi/dlr.php?myId=123456&amp;type=%d</para></listitem>
 	<listitem><para>2. Kannel forwards the message to the SMSC and keeps track of the message</para></listitem>
 	<listitem><para>3. The SMSC can not reach the phone and thus returns a buffered message</para></listitem>
-	<listitem><para>4. Kannel calls http://www.xyz.com/cgi/dlr.php?type=4 to indicate the message being buffered</para></listitem>
+	<listitem><para>4. Kannel calls http://www.xyz.com/cgi/dlr.php?myId=123456&amp;type=4 to indicate the message being buffered</para></listitem>
 	<listitem><para>5. The phone is switched on and the SMS gets delivered from the SMSC. The SMSC reports this to Kannel</para></listitem>
-	<listitem><para>6. Kannel calls http://www.xyz.com/cgi/dlr.php?type=1 to indicate the final success</para></listitem>
+	<listitem><para>6. Kannel calls http://www.xyz.com/cgi/dlr.php?myId=123456&amp;type=1 to indicate the final success</para></listitem>
 	</itemizedlist>
+	<note>
+	  <para>
+	  If you put your own message ID in the dlr-url like in the example above, you can then use this ID to update your database
+	  with the message status.
+	  </para>
+	</note>
 	Depending on the SMSC type not all type of messages are supported. For example a CIMD SMSC does
 	not support buffered messages. Also some SMSC drivers have not implemented all DLR types.
 	</para>

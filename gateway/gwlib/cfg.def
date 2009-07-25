@@ -293,6 +293,7 @@ MULTI_GROUP(smsbox-route,
 MULTI_GROUP(smsc,
     OCTSTR(smsc)
     OCTSTR(smsc-id)
+    OCTSTR(smsc-admin-id)
     OCTSTR(denied-smsc-id)
     OCTSTR(allowed-smsc-id)
     OCTSTR(preferred-smsc-id)
@@ -385,6 +386,29 @@ MULTI_GROUP(smsc,
     OCTSTR(max-sms-octets)
     OCTSTR(login-prompt)
     OCTSTR(password-prompt)
+    OCTSTR(generic-param-username)
+    OCTSTR(generic-param-password)
+    OCTSTR(generic-param-from)
+    OCTSTR(generic-param-to)
+    OCTSTR(generic-param-text)
+    OCTSTR(generic-param-udh)
+    OCTSTR(generic-param-service)
+    OCTSTR(generic-param-account)
+    OCTSTR(generic-param-binfo)
+    OCTSTR(generic-param-dlr-mask)
+    OCTSTR(generic-param-dlr-url)
+    OCTSTR(generic-param-dlr-mid)
+    OCTSTR(generic-param-flash)
+    OCTSTR(generic-param-mclass)
+    OCTSTR(generic-param-mwi)
+    OCTSTR(generic-param-coding)
+    OCTSTR(generic-param-validity)
+    OCTSTR(generic-param-deferred)
+    OCTSTR(generic-param-foreign-id)
+    OCTSTR(generic-message-sent)
+    OCTSTR(generic-status-sent)
+    OCTSTR(generic-status-error)
+    OCTSTR(generic-foreign-id-regex)
 )
 
 
@@ -507,6 +531,16 @@ MULTI_GROUP(modems,
     OCTSTR(message-storage)
     OCTSTR(enable-mms)
     OCTSTR(reset-string)
+)
+
+
+MULTI_GROUP(mssql-connection,
+    OCTSTR(id)
+    OCTSTR(username)
+    OCTSTR(password)
+    OCTSTR(server)
+    OCTSTR(database)
+    OCTSTR(max-connections)
 )
 
 

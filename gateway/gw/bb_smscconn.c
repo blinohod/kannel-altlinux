@@ -115,6 +115,9 @@ extern long max_outgoing_sms_qlength;
 /* incoming sms queue control */
 extern long max_incoming_sms_qlength;
 
+/* configuration filename */
+extern Octstr *cfg_filename;
+
 /* our own thingies */
 
 static volatile sig_atomic_t smsc_running;
@@ -494,6 +497,22 @@ long bb_smscconn_receive(SMSCConn *conn, Msg *sms)
     return SMSCCONN_SUCCESS;
 }
 
+int bb_reload_smsc_groups()
+{
+    Cfg *cfg;
+
+    debug("bb.sms", 0, "Reloading groups list from disk");
+    cfg =  cfg_create(cfg_filename);
+    if (cfg_read(cfg) == -1) {
+        warning(0, "Error opening configuration file %s", octstr_get_cstr(cfg_filename));
+        return -1;
+    }
+    if (smsc_groups != NULL)
+        gwlist_destroy(smsc_groups, NULL);
+    smsc_groups = cfg_get_multi_group(cfg, octstr_imm("smsc"));
+    return 0;
+}
+
 
 /*---------------------------------------------------------------------
  * Other functions
@@ -690,7 +709,7 @@ static long smsc2_find(Octstr *id, long start)
 
     for (i = start; i < gwlist_len(smsc_list); i++) {
         conn = gwlist_get(smsc_list, i);
-        if (conn != NULL && octstr_compare(conn->id, id) == 0) {
+        if (conn != NULL && octstr_compare(conn->admin_id, id) == 0) {
             break;
         }
     }
@@ -703,6 +722,7 @@ int smsc2_stop_smsc(Octstr *id)
 {
     SMSCConn *conn;
     long i = -1;
+    int success = 0;
 
     if (!smsc_running)
         return -1;
@@ -717,9 +737,14 @@ int smsc2_stop_smsc(Octstr *id)
         } else {
             info(0,"HTTP: Shutting down smsc-id `%s'", octstr_get_cstr(id));
             smscconn_shutdown(conn, 1);   /* shutdown the smsc */
+            success = 1;
         }
     }
     gw_rwlock_unlock(&smsc_list_lock);
+    if (success == 0) {
+        error(0, "SMSC %s not found", octstr_get_cstr(id));
+        return -1;
+    }
     return 0;
 }
 
@@ -729,15 +754,21 @@ int smsc2_restart_smsc(Octstr *id)
     SMSCConn *conn, *new_conn;
     Octstr *smscid = NULL;
     long i = -1;
+    int hit;
     int num = 0;
+    int success = 0;
 
     if (!smsc_running)
         return -1;
 
     gw_rwlock_wrlock(&smsc_list_lock);
+
+    if (bb_reload_smsc_groups() != 0) {
+        gw_rwlock_unlock(&smsc_list_lock);
+        return -1;
+    }
     /* find the specific smsc via id */
     while((i = smsc2_find(id, ++i)) != -1) {
-        int hit;
         long group_index;
         /* check if smsc has online status already */
         conn = gwlist_get(smsc_list, i);
@@ -746,13 +777,17 @@ int smsc2_restart_smsc(Octstr *id)
                 octstr_get_cstr(id));
             continue;
         }
-        /* find the group with equal smsc id */
-        hit = 0;
+        /* find the group with equal smsc (admin-)id */
+        hit = -1;
         grp = NULL;
         for (group_index = 0; group_index < gwlist_len(smsc_groups) && 
              (grp = gwlist_get(smsc_groups, group_index)) != NULL; group_index++) {
+            smscid = cfg_get(grp, octstr_imm("smsc-admin-id"));
+            if (smscid == NULL)
             smscid = cfg_get(grp, octstr_imm("smsc-id"));
             if (smscid != NULL && octstr_compare(smscid, id) == 0) {
+                if (hit < 0)
+                    hit = 0;
                 if (hit == num)
                     break;
                 else
@@ -782,14 +817,97 @@ int smsc2_restart_smsc(Octstr *id)
         smscconn_destroy(conn);
         gwlist_insert(smsc_list, i, new_conn);
         smscconn_start(new_conn);
+        success = 1;
         num++;
     }
+
     gw_rwlock_unlock(&smsc_list_lock);
     
+    if (success == 0) {
+        error(0, "SMSC %s not found", octstr_get_cstr(id));
+        return -1;
+    }
     /* wake-up the router */
     if (router_thread >= 0)
         gwthread_wakeup(router_thread);
+    return 0;
+}
+
+int smsc2_remove_smsc(Octstr *id)
+{
+    SMSCConn *conn;
+    long i = -1;
+    int success = 0;
+
+    if (!smsc_running)
+        return -1;
+
+    gw_rwlock_wrlock(&smsc_list_lock);
+
+    gwlist_add_producer(smsc_list);
+    while((i = smsc2_find(id, ++i)) != -1) {
+        conn = gwlist_get(smsc_list, i);
+        gwlist_delete(smsc_list, i, 1);
+        smscconn_shutdown(conn, 0);
+        smscconn_destroy(conn);
+        success = 1;
+    }
+    gwlist_remove_producer(smsc_list);
+
+    gw_rwlock_unlock(&smsc_list_lock);
+    if (success == 0) {
+        error(0, "SMSC %s not found", octstr_get_cstr(id));
+        return -1;
+    }
+    return 0;
+}
+
+int smsc2_add_smsc(Octstr *id)
+{
+    CfgGroup *grp;
+    SMSCConn *conn;
+    Octstr *smscid = NULL;
+    long i;
+    int success = 0;
+
+    if (!smsc_running)
+        return -1;
+
+    gw_rwlock_wrlock(&smsc_list_lock);
+    if (bb_reload_smsc_groups() != 0) {
+        gw_rwlock_unlock(&smsc_list_lock);
+        return -1;
+    }
     
+    if (smsc2_find(id, 0) != -1) {
+        warning(0, "Could not add already existing SMSC %s", octstr_get_cstr(id));
+        gw_rwlock_unlock(&smsc_list_lock);
+        return -1;
+    }
+
+    gwlist_add_producer(smsc_list);
+    grp = NULL;
+    for (i = 0; i < gwlist_len(smsc_groups) &&
+        (grp = gwlist_get(smsc_groups, i)) != NULL; i++) {
+        smscid = cfg_get(grp, octstr_imm("smsc-admin-id"));
+        if (smscid == NULL)
+            smscid = cfg_get(grp, octstr_imm("smsc-id"));
+
+        if (smscid != NULL && octstr_compare(smscid, id) == 0) {
+            conn = smscconn_create(grp, 1);
+            if (conn != NULL) {
+                gwlist_append(smsc_list, conn);
+                smscconn_start(conn);
+                success = 1;
+            }
+        }
+    }
+    gwlist_remove_producer(smsc_list);
+    gw_rwlock_unlock(&smsc_list_lock);
+    if (success == 0) {
+        error(0, "SMSC %s not found", octstr_get_cstr(id));
+        return -1;
+    }
     return 0;
 }
 
@@ -914,6 +1032,7 @@ Octstr *smsc2_status(int status_type)
     SMSCConn *conn;
     StatusInfo info;
     const Octstr *conn_id = NULL;
+    const Octstr *conn_admin_id = NULL;
     const Octstr *conn_name = NULL;
 
     if ((lb = bb_status_linebreak(status_type)) == NULL)
@@ -949,22 +1068,29 @@ Octstr *smsc2_status(int status_type)
 
         conn_id = conn ? smscconn_id(conn) : octstr_imm("unknown");
         conn_id = conn_id ? conn_id : octstr_imm("unknown");
+        conn_admin_id = conn ? smscconn_admin_id(conn) : octstr_imm("unknown");
+        conn_admin_id = conn_admin_id ? conn_admin_id : octstr_imm("unknown");
         conn_name = conn ? smscconn_name(conn) : octstr_imm("unknown");
 
         if (status_type == BBSTATUS_HTML) {
             octstr_append_cstr(tmp, "&nbsp;&nbsp;&nbsp;&nbsp;<b>");
             octstr_append(tmp, conn_id);
-            octstr_append_cstr(tmp, "</b>&nbsp;&nbsp;&nbsp;&nbsp;");
+            octstr_append_cstr(tmp, "</b>[");
+            octstr_append(tmp, conn_admin_id);
+            octstr_append_cstr(tmp, "]&nbsp;&nbsp;&nbsp;&nbsp;");
         } else if (status_type == BBSTATUS_TEXT) {
             octstr_append_cstr(tmp, "    ");
             octstr_append(tmp, conn_id);
-            octstr_append_cstr(tmp, "    ");
+            octstr_append_cstr(tmp, "[");
+            octstr_append(tmp, conn_admin_id);
+            octstr_append_cstr(tmp, "]    ");
         } 
         if (status_type == BBSTATUS_XML) {
             octstr_append_cstr(tmp, "<smsc>\n\t\t<name>");
             octstr_append(tmp, conn_name);
-            octstr_append_cstr(tmp, "</name>\n\t\t");
-            octstr_append_cstr(tmp, "<id>");
+            octstr_append_cstr(tmp, "</name>\n\t\t<admin-id>");
+            octstr_append(tmp, conn_admin_id);
+            octstr_append_cstr(tmp, "</admin-id>\n\t\t<id>");
             octstr_append(tmp, conn_id);
             octstr_append_cstr(tmp, "</id>\n\t\t");
         } else
