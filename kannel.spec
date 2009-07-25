@@ -4,12 +4,12 @@
 %define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20090417
+%define cvs_build 2090721
 
 Summary: WAP and SMS gateway
 Name: kannel
-Version: 1.4.3
-Release: alt0.cvs%cvs_build.M40.1
+Version: 1.5.0
+Release: alt1.cvs%cvs_build.M40.1
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -19,6 +19,7 @@ Source2: smsbox.init
 Source3: kannel.logrotate
 Source4: kannel.monit
 Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
+Patch1: kannel_store_tools.patch
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
@@ -57,6 +58,7 @@ applications that use Kannel.
 %prep
 %setup -n gateway-%version
 %patch0 -p2
+%patch1 -p2
 
 %build
 %configure \
