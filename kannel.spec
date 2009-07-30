@@ -147,7 +147,7 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
-* Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs2090721
+* Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs20090721
 - Version changed to 1.5.0
 - Added PAM support patch for sendsms API
 - Added DLR retry patch
