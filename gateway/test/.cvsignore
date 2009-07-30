@@ -8,6 +8,7 @@ udp_send
 wapbox_feeder
 wml_tester
 test_counter
+test_date
 test_http
 test_mem
 test_udp

@@ -4,11 +4,11 @@
 %define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20090525
+%define cvs_build 20090721
 
 Summary: WAP and SMS gateway
 Name: kannel
-Version: 1.4.3
+Version: 1.5.0
 Release: alt1.cvs%cvs_build
 License: Kannel
 Group: Communications
@@ -19,6 +19,9 @@ Source2: smsbox.init
 Source3: kannel.logrotate
 Source4: kannel.monit
 Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
+Patch1: kannel_store_tools.patch
+Patch2: kannel-dlr-retry.patch
+Patch3: kannel-pam.patch
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines
@@ -57,9 +60,13 @@ applications that use Kannel.
 %prep
 %setup -n gateway-%version
 %patch0 -p2
+%patch1 -p0
+%patch2 -p0
+%patch3 -p0
 
 %build
 %configure \
+		--with-cflags='-fPIC' \
 		--enable-cookies \
 		--enable-largefile \
 		--enable-docs \
@@ -98,6 +105,8 @@ install -m 644 gw/wapkannel.conf %buildroot%_sysconfdir/kannel
 install -m 644 gw/smskannel.conf %buildroot%_sysconfdir/kannel
 install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
+install -m 755 test/store_tools %buildroot%_bindir/kannel_store_tools
+install -m 755 test/wapproxy %buildroot%_bindir
 install -m 755 %SOURCE1 %buildroot%_initdir/kannel.bearerbox
 install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
 install -m 755 %SOURCE3 %buildroot%_sysconfdir/logrotate.d/kannel
@@ -138,12 +147,20 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs2090721
+- Version changed to 1.5.0
+- Added PAM support patch for sendsms API
+- Added DLR retry patch
+- Added store_tools utility for SMS storage management
+- Added -fPIC build flag for building kannel based software
+- wapproxy is packaged
+
 * Fri May 29 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090525
 - merge CVS updates up to May 25 2009
   + intermediate DLR support
-	+ DLR support for mtbatch
-	+ multi-IP support implemented
-	+ return SMPP DLR error in dlr_err metadata parameter
+  + DLR support for mtbatch
+  + multi-IP support implemented
+  + return SMPP DLR error in dlr_err metadata parameter
 
 * Tue Apr 21 2009 Michael Bochkaryov <misha@altlinux.ru> 1.4.3-alt1.cvs20090417
 - build from CVS tree

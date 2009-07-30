@@ -79,6 +79,7 @@
 #include "dlr.h"
 #include "bearerbox.h"
 #include "meta_data.h"
+#include "load.h"
 
 #define SMPP_DEFAULT_CHARSET "UTF-8"
 
@@ -111,7 +112,7 @@
 #define SMPP_MAX_PENDING_SUBMITS    10
 #define SMPP_DEFAULT_VERSION        0x34
 #define SMPP_DEFAULT_PRIORITY       0
-#define SMPP_THROTTLING_SLEEP_TIME  15
+#define SMPP_THROTTLING_SLEEP_TIME  1
 #define SMPP_DEFAULT_CONNECTION_TIMEOUT  10 * SMPP_ENQUIRE_LINK_INTERVAL
 #define SMPP_DEFAULT_WAITACK        60
 #define SMPP_DEFAULT_SHUTDOWN_TIMEOUT 30
@@ -152,7 +153,8 @@ typedef struct {
     long bind_addr_npi;
     int transmit_port;
     int receive_port;
-    int quitting;
+    int use_ssl;
+    volatile int quitting;
     long enquire_link_interval;
     long max_pending_submits;
     int version;
@@ -166,6 +168,7 @@ typedef struct {
     long connection_timeout;
     long wait_ack;
     int wait_ack_action;
+    Load *load;
     SMSCConn *conn;
 } SMPP;
 
@@ -179,7 +182,7 @@ struct smpp_msg {
 /*
  * create smpp_msg struct
  */
-static struct smpp_msg* smpp_msg_create(Msg *msg)
+static inline struct smpp_msg* smpp_msg_create(Msg *msg)
 {
     struct smpp_msg *result = gw_malloc(sizeof(struct smpp_msg));
 
@@ -194,7 +197,7 @@ static struct smpp_msg* smpp_msg_create(Msg *msg)
 /*
  * destroy smpp_msg struct. If destroy_msg flag is set, then message will be freed as well
  */
-static void smpp_msg_destroy(struct smpp_msg *msg, int destroy_msg)
+static inline void smpp_msg_destroy(struct smpp_msg *msg, int destroy_msg)
 {
     /* sanity check */
     if (msg == NULL)
@@ -261,6 +264,9 @@ static SMPP *smpp_create(SMSCConn *conn, Octstr *host, int transmit_port,
     smpp->wait_ack_action = wait_ack_action;
     smpp->bind_addr_ton = 0;
     smpp->bind_addr_npi = 0;
+    smpp->use_ssl = 0;
+    smpp->load = load_create_real(0);
+    load_add_interval(smpp->load, 1);
 
     return smpp;
 }
@@ -282,6 +288,7 @@ static void smpp_destroy(SMPP *smpp)
         octstr_destroy(smpp->my_number);
         octstr_destroy(smpp->alt_charset);
         octstr_destroy(smpp->alt_addr_charset);
+        load_destroy(smpp->load);
         gw_free(smpp);
     }
 }
@@ -289,7 +296,8 @@ static void smpp_destroy(SMPP *smpp)
 
 /*
  * Try to read an SMPP PDU from a Connection. Return -1 for error (caller
- * should close the connection), 0 for no PDU to ready yet, or 1 for PDU
+ * should close the connection), -2 for malformed PDU , 0 for no PDU to
+ * ready yet, or 1 for PDU
  * read and unpacked. Return a pointer to the PDU in `*pdu'. Use `*len'
  * to store the length of the PDU to read (it may be possible to read the
  * length, but not the rest of the PDU - we need to remember the lenght
@@ -304,7 +312,7 @@ static int read_pdu(SMPP *smpp, Connection *conn, long *len, SMPP_PDU **pdu)
         if (*len == -1) {
             error(0, "SMPP[%s]: Server sent garbage, ignored.",
                   octstr_get_cstr(smpp->conn->id));
-            return -1;
+            return -2;
         } else if (*len == 0) {
             if (conn_eof(conn) || conn_error(conn))
                 return -1;
@@ -328,7 +336,7 @@ static int read_pdu(SMPP *smpp, Connection *conn, long *len, SMPP_PDU **pdu)
               octstr_get_cstr(smpp->conn->id));
         octstr_dump(os, 0);
         octstr_destroy(os);
-        return -1;
+        return -2;
     }
 
     octstr_destroy(os);
@@ -344,62 +352,62 @@ static long convert_addr_from_pdu(Octstr *id, Octstr *addr, long ton, long npi, 
         return reason;
 
     switch(ton) {
-    case GSM_ADDR_TON_INTERNATIONAL:
-        /*
-         * Checks to perform:
-         *   1) assume international number has at least 7 chars
-         *   2) the whole source addr consist of digits, exception '+' in front
-         */
-        if (octstr_len(addr) < 7) {
-            /* We consider this as a "non-hard" condition, since there "may"
-             * be international numbers routable that are < 7 digits. Think
-             * of 2 digit country code + 3 digit emergency code. */
-            warning(0, "SMPP[%s]: Mallformed addr `%s', generally expected at least 7 digits. ",
-                     octstr_get_cstr(id),
-                     octstr_get_cstr(addr));
-        } else if (octstr_get_char(addr, 0) == '+' &&
-                   !octstr_check_range(addr, 1, 256, gw_isdigit)) {
-            error(0, "SMPP[%s]: Mallformed addr `%s', expected all digits. ",
-                     octstr_get_cstr(id),
-                     octstr_get_cstr(addr));
-            reason = SMPP_ESME_RINVSRCADR;
-            goto error;
-        } else if (octstr_get_char(addr, 0) != '+' &&
-                   !octstr_check_range(addr, 0, 256, gw_isdigit)) {
-            error(0, "SMPP[%s]: Mallformed addr `%s', expected all digits. ",
-                     octstr_get_cstr(id),
-                     octstr_get_cstr(addr));
-            reason = SMPP_ESME_RINVSRCADR;
-            goto error;
-        }
-        /* check if we received leading '00', then remove it*/
-        if (octstr_search(addr, octstr_imm("00"), 0) == 0)
-            octstr_delete(addr, 0, 2);
-
-        /* international, insert '+' if not already here */
-        if (octstr_get_char(addr, 0) != '+')
-            octstr_insert_char(addr, 0, '+');
-
-        break;
-    case GSM_ADDR_TON_ALPHANUMERIC:
-        if (octstr_len(addr) > 11) {
-            /* alphanum sender, max. allowed length is 11 (according to GSM specs) */
-            error(0, "SMPP[%s]: Mallformed addr `%s', alphanum length greater 11 chars. ",
-                     octstr_get_cstr(id),
-                     octstr_get_cstr(addr));
-            reason = SMPP_ESME_RINVSRCADR;
-            goto error;
-        }
-        if (alt_addr_charset) {
-            if (octstr_str_case_compare(alt_addr_charset, "gsm") == 0)
-		charset_gsm_to_utf8(addr);
-            else if (charset_convert(addr, octstr_get_cstr(alt_addr_charset), SMPP_DEFAULT_CHARSET) != 0)
-                error(0, "Failed to convert address from charset <%s> to <%s>, leave as is.",
-                    octstr_get_cstr(alt_addr_charset), SMPP_DEFAULT_CHARSET);
-        }
-        break;
-    default: /* otherwise don't touch addr, user should handle it */
-        break;
+        case GSM_ADDR_TON_INTERNATIONAL:
+            /*
+             * Checks to perform:
+             *   1) assume international number has at least 7 chars
+             *   2) the whole source addr consist of digits, exception '+' in front
+             */
+            if (octstr_len(addr) < 7) {
+                /* We consider this as a "non-hard" condition, since there "may"
+                 * be international numbers routable that are < 7 digits. Think
+                 * of 2 digit country code + 3 digit emergency code. */
+                warning(0, "SMPP[%s]: Mallformed addr `%s', generally expected at least 7 digits. ",
+                        octstr_get_cstr(id),
+                        octstr_get_cstr(addr));
+            } else if (octstr_get_char(addr, 0) == '+' &&
+                       !octstr_check_range(addr, 1, 256, gw_isdigit)) {
+                error(0, "SMPP[%s]: Mallformed addr `%s', expected all digits. ",
+                      octstr_get_cstr(id),
+                      octstr_get_cstr(addr));
+                reason = SMPP_ESME_RINVSRCADR;
+                goto error;
+            } else if (octstr_get_char(addr, 0) != '+' &&
+                       !octstr_check_range(addr, 0, 256, gw_isdigit)) {
+                error(0, "SMPP[%s]: Mallformed addr `%s', expected all digits. ",
+                      octstr_get_cstr(id),
+                      octstr_get_cstr(addr));
+                reason = SMPP_ESME_RINVSRCADR;
+                goto error;
+            }
+            /* check if we received leading '00', then remove it*/
+            if (octstr_search(addr, octstr_imm("00"), 0) == 0)
+                octstr_delete(addr, 0, 2);
+            
+            /* international, insert '+' if not already here */
+            if (octstr_get_char(addr, 0) != '+')
+                octstr_insert_char(addr, 0, '+');
+            
+            break;
+        case GSM_ADDR_TON_ALPHANUMERIC:
+            if (octstr_len(addr) > 11) {
+                /* alphanum sender, max. allowed length is 11 (according to GSM specs) */
+                error(0, "SMPP[%s]: Mallformed addr `%s', alphanum length greater 11 chars. ",
+                      octstr_get_cstr(id),
+                      octstr_get_cstr(addr));
+                reason = SMPP_ESME_RINVSRCADR;
+                goto error;
+            }
+            if (alt_addr_charset) {
+                if (octstr_str_case_compare(alt_addr_charset, "gsm") == 0)
+                    charset_gsm_to_utf8(addr);
+                else if (charset_convert(addr, octstr_get_cstr(alt_addr_charset), SMPP_DEFAULT_CHARSET) != 0)
+                    error(0, "Failed to convert address from charset <%s> to <%s>, leave as is.",
+                          octstr_get_cstr(alt_addr_charset), SMPP_DEFAULT_CHARSET);
+            }
+            break;
+        default: /* otherwise don't touch addr, user should handle it */
+            break;
     }
 
 error:
@@ -444,8 +452,8 @@ static Msg *pdu_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
      */
     if (pdu->u.deliver_sm.destination_addr == NULL) {
         error(0, "SMPP[%s]: Mallformed destination_addr `%s', may not be empty. "
-                 "Discarding MO message.", octstr_get_cstr(smpp->conn->id),
-                     octstr_get_cstr(pdu->u.deliver_sm.destination_addr));
+              "Discarding MO message.", octstr_get_cstr(smpp->conn->id),
+              octstr_get_cstr(pdu->u.deliver_sm.destination_addr));
         *reason = SMPP_ESME_RINVDSTADR;
         goto error;
     }
@@ -490,8 +498,8 @@ static Msg *pdu_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
               octstr_get_cstr(smpp->conn->id), udhl);
         if (udhl > octstr_len(msg->sms.msgdata)) {
             error(0, "SMPP[%s]: Mallformed UDH length indicator 0x%03x while message length "
-                     "0x%03lx. Discarding MO message.", octstr_get_cstr(smpp->conn->id),
-                     udhl, octstr_len(msg->sms.msgdata));
+                  "0x%03lx. Discarding MO message.", octstr_get_cstr(smpp->conn->id),
+                  udhl, octstr_len(msg->sms.msgdata));
             *reason = SMPP_ESME_RINVESMCLASS;
             goto error;
         }
@@ -511,7 +519,7 @@ static Msg *pdu_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
             if (smpp->alt_charset && msg->sms.coding != DC_8BIT) {
                 if (charset_convert(msg->sms.msgdata, octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET) != 0)
                     error(0, "Failed to convert msgdata from charset <%s> to <%s>, will leave as is.",
-                             octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET);
+                          octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET);
                 msg->sms.coding = DC_7BIT;
             } else { /* assume GSM 03.38 7-bit alphabet */
                 charset_gsm_to_utf8(msg->sms.msgdata);
@@ -527,12 +535,12 @@ static Msg *pdu_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
         case 0x05: /* JIS - what do I do with that ? */
             break;
         case 0x06: /* Cyrllic - iso-8859-5, I'll convert to unicode */
-            if (charset_convert(msg->sms.msgdata, "ISO-8859-5", "UTF-8") != 0)
-                error(0, "Failed to convert msgdata from cyrllic to UTF-8, will leave as is");
+            if (charset_convert(msg->sms.msgdata, "ISO-8859-5", SMPP_DEFAULT_CHARSET) != 0)
+                error(0, "Failed to convert msgdata from cyrllic to " SMPP_DEFAULT_CHARSET ", will leave as is");
             msg->sms.coding = DC_7BIT; break;
         case 0x07: /* Hebrew iso-8859-8, I'll convert to unicode */
-            if (charset_convert(msg->sms.msgdata, "ISO-8859-8", "UTF-8") != 0)
-                error(0, "Failed to convert msgdata from hebrew to UTF-8, will leave as is");
+            if (charset_convert(msg->sms.msgdata, "ISO-8859-8", SMPP_DEFAULT_CHARSET) != 0)
+                error(0, "Failed to convert msgdata from hebrew to " SMPP_DEFAULT_CHARSET ", will leave as is");
             msg->sms.coding = DC_7BIT; break;
         case 0x08: /* unicode UCS-2, yey */
             msg->sms.coding = DC_UCS2; break;
@@ -608,8 +616,8 @@ static Msg *data_sm_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
      */
     if (pdu->u.data_sm.destination_addr == NULL) {
         error(0, "SMPP[%s]: Mallformed destination_addr `%s', may not be empty. "
-                 "Discarding MO message.", octstr_get_cstr(smpp->conn->id),
-                     octstr_get_cstr(pdu->u.data_sm.destination_addr));
+              "Discarding MO message.", octstr_get_cstr(smpp->conn->id),
+              octstr_get_cstr(pdu->u.data_sm.destination_addr));
         *reason = SMPP_ESME_RINVDSTADR;
         goto error;
     }
@@ -644,8 +652,8 @@ static Msg *data_sm_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
               octstr_get_cstr(smpp->conn->id), udhl);
         if (udhl > octstr_len(msg->sms.msgdata)) {
             error(0, "SMPP[%s]: Mallformed UDH length indicator 0x%03x while message length "
-                     "0x%03lx. Discarding MO message.", octstr_get_cstr(smpp->conn->id),
-                     udhl, octstr_len(msg->sms.msgdata));
+                  "0x%03lx. Discarding MO message.", octstr_get_cstr(smpp->conn->id),
+                  udhl, octstr_len(msg->sms.msgdata));
             *reason = SMPP_ESME_RINVESMCLASS;
             goto error;
         }
@@ -665,7 +673,7 @@ static Msg *data_sm_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
             if (smpp->alt_charset && msg->sms.coding != DC_8BIT) {
                 if (charset_convert(msg->sms.msgdata, octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET) != 0)
                     error(0, "Failed to convert msgdata from charset <%s> to <%s>, will leave as is.",
-                             octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET);
+                          octstr_get_cstr(smpp->alt_charset), SMPP_DEFAULT_CHARSET);
                 msg->sms.coding = DC_7BIT;
             } else { /* assume GSM 03.38 7-bit alphabet */
                 charset_gsm_to_utf8(msg->sms.msgdata);
@@ -681,12 +689,12 @@ static Msg *data_sm_to_msg(SMPP *smpp, SMPP_PDU *pdu, long *reason)
         case 0x05: /* JIS - what do I do with that ? */
             break;
         case 0x06: /* Cyrllic - iso-8859-5, I'll convert to unicode */
-            if (charset_convert(msg->sms.msgdata, "ISO-8859-5", "UTF-8") != 0)
-                error(0, "Failed to convert msgdata from cyrllic to UTF-8, will leave as is");
+            if (charset_convert(msg->sms.msgdata, "ISO-8859-5", SMPP_DEFAULT_CHARSET) != 0)
+                error(0, "Failed to convert msgdata from cyrllic to " SMPP_DEFAULT_CHARSET ", will leave as is");
             msg->sms.coding = DC_7BIT; break;
         case 0x07: /* Hebrew iso-8859-8, I'll convert to unicode */
-            if (charset_convert(msg->sms.msgdata, "ISO-8859-8", "UTF-8") != 0)
-                error(0, "Failed to convert msgdata from hebrew to UTF-8, will leave as is");
+            if (charset_convert(msg->sms.msgdata, "ISO-8859-8", SMPP_DEFAULT_CHARSET) != 0)
+                error(0, "Failed to convert msgdata from hebrew to " SMPP_DEFAULT_CHARSET ", will leave as is");
             msg->sms.coding = DC_7BIT; break;
         case 0x08: /* unicode UCS-2, yey */
             msg->sms.coding = DC_UCS2; break;
@@ -906,16 +914,18 @@ static SMPP_PDU *msg_to_pdu(SMPP *smpp, Msg *msg)
     /*
      * check for validity and defered settings
      * were message value has higher priiority then smsc config group value
+     * Note: we always send in UTC and just define "Time Difference" as 00 and
+     *       direction '+'.
      */
-    validity = msg->sms.validity >= 0 ? msg->sms.validity : smpp->validityperiod;
-    if (validity >= 0) {
+    validity = msg->sms.validity != SMS_PARAM_UNDEFINED ? msg->sms.validity : smpp->validityperiod;
+    if (validity != SMS_PARAM_UNDEFINED) {
         struct tm tm = gw_gmtime(time(NULL) + validity * 60);
         pdu->u.submit_sm.validity_period = octstr_format("%02d%02d%02d%02d%02d%02d000+",
                 tm.tm_year % 100, tm.tm_mon + 1, tm.tm_mday,
                 tm.tm_hour, tm.tm_min, tm.tm_sec);
     }
 
-    if (msg->sms.deferred >= 0) {
+    if (msg->sms.deferred != SMS_PARAM_UNDEFINED) {
         struct tm tm = gw_gmtime(time(NULL) + msg->sms.deferred * 60);
         pdu->u.submit_sm.schedule_delivery_time = octstr_format("%02d%02d%02d%02d%02d%02d000+",
                 tm.tm_year % 100, tm.tm_mon + 1, tm.tm_mday,
@@ -948,35 +958,66 @@ static SMPP_PDU *msg_to_pdu(SMPP *smpp, Msg *msg)
 }
 
 
-static void send_enquire_link(SMPP *smpp, Connection *conn, long *last_sent)
+static int send_enquire_link(SMPP *smpp, Connection *conn, long *last_sent)
 {
     SMPP_PDU *pdu;
     Octstr *os;
+    int ret;
 
-    if (date_universal_now() - *last_sent < smpp->enquire_link_interval)
-        return;
+    if (difftime(date_universal_now(),*last_sent) < smpp->enquire_link_interval)
+        return 0;
     *last_sent = date_universal_now();
 
     pdu = smpp_pdu_create(enquire_link, counter_increase(smpp->message_id_counter));
     dump_pdu("Sending enquire link:", smpp->conn->id, pdu);
     os = smpp_pdu_pack(pdu);
-    if (os)
-	conn_write(conn, os); /* Write errors checked by caller. */
+    if (os != NULL)
+        ret = conn_write(conn, os); /* Write errors checked by caller. */
+    else
+        ret = -1;
     octstr_destroy(os);
     smpp_pdu_destroy(pdu);
+
+    return ret;
 }
 
-
-static void send_unbind(SMPP *smpp, Connection *conn)
+static int send_gnack(SMPP *smpp, Connection *conn, long reason, unsigned long seq_num)
 {
     SMPP_PDU *pdu;
     Octstr *os;
+    int ret;
+
+    pdu = smpp_pdu_create(generic_nack, seq_num);
+    pdu->u.generic_nack.command_status = reason;
+    dump_pdu("Sending generic_nack:", smpp->conn->id, pdu);
+    os = smpp_pdu_pack(pdu);
+    if (os != NULL)
+        ret = conn_write(conn, os);
+    else
+        ret = -1;
+    octstr_destroy(os);
+    smpp_pdu_destroy(pdu);
+
+    return ret;
+}
+
+static int send_unbind(SMPP *smpp, Connection *conn)
+{
+    SMPP_PDU *pdu;
+    Octstr *os;
+    int ret;
+
     pdu = smpp_pdu_create(unbind, counter_increase(smpp->message_id_counter));
     dump_pdu("Sending unbind:", smpp->conn->id, pdu);
     os = smpp_pdu_pack(pdu);
-    conn_write(conn, os);
+    if (os != NULL)
+        ret = conn_write(conn, os);
+    else
+        ret = -1;
     octstr_destroy(os);
     smpp_pdu_destroy(pdu);
+
+    return ret;
 }
 
 
@@ -999,21 +1040,25 @@ static int send_pdu(Connection *conn, Octstr *id, SMPP_PDU *pdu)
 }
 
 
-static void send_messages(SMPP *smpp, Connection *conn, long *pending_submits)
+static int send_messages(SMPP *smpp, Connection *conn, long *pending_submits)
 {
     Msg *msg;
     SMPP_PDU *pdu;
     Octstr *os;
-    double delay = 0;
 
     if (*pending_submits == -1)
-        return;
-
-    if (smpp->conn->throughput > 0) {
-        delay = 1.0 / smpp->conn->throughput;
-    }
+        return 0;
 
     while (*pending_submits < smpp->max_pending_submits) {
+        /* check our throughput */
+        if (smpp->conn->throughput > 0 && load_get(smpp->load, 0) >= smpp->conn->throughput) {
+            debug("bb.sms.smpp", 0, "SMPP[%s]: throughput limit exceeded (%.02f,%.02f)",
+                  octstr_get_cstr(smpp->conn->id), load_get(smpp->load, 0), smpp->conn->throughput);
+            break;
+        }
+        debug("bb.sms.smpp", 0, "SMPP[%s]: throughput (%.02f,%.02f)",
+              octstr_get_cstr(smpp->conn->id), load_get(smpp->load, 0), smpp->conn->throughput);
+
     	/* Get next message, quit if none to be sent */
     	msg = gw_prioqueue_remove(smpp->msgs_to_send);
         if (msg == NULL)
@@ -1033,17 +1078,16 @@ static void send_messages(SMPP *smpp, Connection *conn, long *pending_submits)
             smpp_pdu_destroy(pdu);
             octstr_destroy(os);
             ++(*pending_submits);
-            /*
-             * obey throughput speed limit, if any.
-             */
-            if (smpp->conn->throughput > 0)
-                gwthread_sleep(delay);
-        } else { /* write error occurs */
+            load_increase(smpp->load);
+        }
+        else { /* write error occurs */
             smpp_pdu_destroy(pdu);
             bb_smscconn_send_failed(smpp->conn, msg, SMSCCONN_FAILED_TEMPORARILY, NULL);
-            break;
+            return -1;
         }
     }
+
+    return 0;
 }
 
 
@@ -1057,7 +1101,12 @@ static Connection *open_transmitter(SMPP *smpp)
     SMPP_PDU *bind;
     Connection *conn;
 
-    conn = conn_open_tcp(smpp->host, smpp->transmit_port, smpp->conn->our_host );
+#ifdef HAVE_LIBSSL
+    if (smpp->use_ssl)
+        conn = conn_open_ssl(smpp->host, smpp->transmit_port, NULL, smpp->conn->our_host);
+    else
+#endif
+        conn = conn_open_tcp(smpp->host, smpp->transmit_port, smpp->conn->our_host);
     if (conn == NULL) {
         error(0, "SMPP[%s]: Couldn't connect to server.",
               octstr_get_cstr(smpp->conn->id));
@@ -1100,7 +1149,12 @@ static Connection *open_transceiver(SMPP *smpp)
     SMPP_PDU *bind;
     Connection *conn;
 
-    conn = conn_open_tcp(smpp->host, smpp->transmit_port, smpp->conn->our_host );
+#ifdef HAVE_LIBSSL
+    if (smpp->use_ssl)
+        conn = conn_open_ssl(smpp->host, smpp->transmit_port, NULL, smpp->conn->our_host);
+    else
+#endif
+        conn = conn_open_tcp(smpp->host, smpp->transmit_port, smpp->conn->our_host);
     if (conn == NULL) {
        error(0, "SMPP[%s]: Couldn't connect to server.",
              octstr_get_cstr(smpp->conn->id));
@@ -1141,7 +1195,12 @@ static Connection *open_receiver(SMPP *smpp)
     SMPP_PDU *bind;
     Connection *conn;
 
-    conn = conn_open_tcp(smpp->host, smpp->receive_port, smpp->conn->our_host );
+#ifdef HAVE_LIBSSL
+    if (smpp->use_ssl)
+        conn = conn_open_ssl(smpp->host, smpp->receive_port, NULL, smpp->conn->our_host);
+    else
+#endif
+        conn = conn_open_tcp(smpp->host, smpp->receive_port, smpp->conn->our_host);
     if (conn == NULL) {
         error(0, "SMPP[%s]: Couldn't connect to server.",
               octstr_get_cstr(smpp->conn->id));
@@ -1233,7 +1292,7 @@ static Msg *handle_dlr(SMPP *smpp, Octstr *destination_addr, Octstr *short_messa
             /* first try sscanf way if thus failed then old way */
             ret = sscanf(octstr_get_cstr(respstr),
                          "id:%64[^s] sub:%d dlvrd:%d submit date:%14[0-9] done "
-                         "date:%14[0-9] stat:%10[^t^e] err:%3[^t]",
+                         "date:%14[0-9] stat:%15[^t^e] err:%3[^t]",
                          id_cstr, &sub, &dlrvrd, sub_d_cstr, done_d_cstr,
                          stat_cstr, err_cstr);
             if (ret == 7) {
@@ -1348,6 +1407,7 @@ static Msg *handle_dlr(SMPP *smpp, Octstr *destination_addr, Octstr *short_messa
          */
         dlrmsg->sms.msgdata = octstr_duplicate(respstr);
         dlrmsg->sms.sms_type = report_mo;
+        dlrmsg->sms.account = octstr_duplicate(smpp->username);
         if (err != NULL) {
             if (dlrmsg->sms.meta_data == NULL) {
                 dlrmsg->sms.meta_data = octstr_create("");
@@ -1382,17 +1442,15 @@ static long smscconn_failure_reason_to_smpp_status(long reason)
 }
 
 
-static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
+static int handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
     	    	       long *pending_submits)
 {
-    SMPP_PDU *resp;
+    SMPP_PDU *resp = NULL;
     Octstr *os;
-    Msg *msg, *dlrmsg = NULL;
-    long reason;
-    long cmd_stat;
+    Msg *msg = NULL, *dlrmsg=NULL;
     struct smpp_msg *smpp_msg = NULL;
-
-    resp = NULL;
+    long reason, cmd_stat;
+    int ret = 0;
 
     switch (pdu->type) {
         case data_sm:
@@ -1408,10 +1466,10 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
            }
            mutex_unlock(smpp->conn->flow_mutex);
            /* got a deliver ack (DLR)?
-             * NOTE: following SMPP v3.4. spec. we are interested
-             *       only on bits 2-5 (some SMSC's send 0x44, and it's
-             *       spec. conforme)
-             */
+            * NOTE: following SMPP v3.4. spec. we are interested
+            *       only on bits 2-5 (some SMSC's send 0x44, and it's
+            *       spec. conforme)
+            */
            if (pdu->u.data_sm.esm_class & (0x04|0x08|0x20)) {
                 debug("bb.sms.smpp",0,"SMPP[%s] handle_pdu, got DLR",
                       octstr_get_cstr(smpp->conn->id));
@@ -1502,6 +1560,7 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
 
                 time(&msg->sms.time);
                 msg->sms.smsc_id = octstr_duplicate(smpp->conn->id);
+                msg->sms.account = octstr_duplicate(smpp->username);
                 reason =  bb_smscconn_receive(smpp->conn, msg);
                 resp->u.deliver_sm_resp.command_status = smscconn_failure_reason_to_smpp_status(reason);
             }
@@ -1513,6 +1572,12 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
             break;
 
         case enquire_link_resp:
+            if (pdu->u.enquire_link_resp.command_status != 0) {
+                error(0, "SMPP[%s]: SMSC got error to enquire_link, code 0x%08lx (%s).",
+                      octstr_get_cstr(smpp->conn->id),
+                      pdu->u.enquire_link_resp.command_status,
+                smpp_error_to_string(pdu->u.enquire_link_resp.command_status));
+            }
             break;
 
         case submit_sm_resp:
@@ -1546,9 +1611,8 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
                 else
                     smpp->throttling_err_time = 0;
 
-                bb_smscconn_send_failed(smpp->conn, msg, reason,
-                        octstr_format("%ld/%s", pdu->u.submit_sm_resp.command_status,
-                            smpp_error_to_string(pdu->u.submit_sm_resp.command_status)));
+                bb_smscconn_send_failed(smpp->conn, msg, reason, octstr_format("0x%08lx/%s", pdu->u.submit_sm_resp.command_status,
+                                        smpp_error_to_string(pdu->u.submit_sm_resp.command_status)));
                 --(*pending_submits);
             } else {
                 Octstr *tmp;
@@ -1580,61 +1644,73 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
             break;
 
         case bind_transmitter_resp:
-            if (pdu->u.bind_transmitter_resp.command_status != 0) {
-                error(0, "SMPP[%s]: SMSC rejected login to transmit, "
-		              "code 0x%08lx (%s).",
+            if (pdu->u.bind_transmitter_resp.command_status != 0 &&
+                pdu->u.bind_transmitter_resp.command_status != SMPP_ESME_RALYNBD) {
+                error(0, "SMPP[%s]: SMSC rejected login to transmit, code 0x%08lx (%s).",
                       octstr_get_cstr(smpp->conn->id),
                       pdu->u.bind_transmitter_resp.command_status,
-		      smpp_error_to_string(pdu->u.bind_transmitter_resp.command_status));
+                smpp_error_to_string(pdu->u.bind_transmitter_resp.command_status));
+                mutex_lock(smpp->conn->flow_mutex);
+                smpp->conn->status = SMSCCONN_DISCONNECTED;
+                mutex_unlock(smpp->conn->flow_mutex);
                 if (pdu->u.bind_transmitter_resp.command_status == SMPP_ESME_RINVSYSID ||
-                    pdu->u.bind_transmitter_resp.command_status == SMPP_ESME_RINVPASWD)
+                    pdu->u.bind_transmitter_resp.command_status == SMPP_ESME_RINVPASWD) {
                     smpp->quitting = 1;
+                }
             } else {
                 *pending_submits = 0;
                 mutex_lock(smpp->conn->flow_mutex);
                 smpp->conn->status = SMSCCONN_ACTIVE;
-                smpp->conn->connect_time = time(NULL);
+                time(&smpp->conn->connect_time);
                 mutex_unlock(smpp->conn->flow_mutex);
                 bb_smscconn_connected(smpp->conn);
             }
             break;
 
         case bind_transceiver_resp:
-            if (pdu->u.bind_transceiver_resp.command_status != 0) {
-                error(0, "SMPP[%s]: SMSC rejected login to transmit, "
-                      "code 0x%08lx (%s).",
+            if (pdu->u.bind_transceiver_resp.command_status != 0 &&
+	            pdu->u.bind_transceiver_resp.command_status != SMPP_ESME_RALYNBD) {
+                error(0, "SMPP[%s]: SMSC rejected login to transmit, code 0x%08lx (%s).",
                       octstr_get_cstr(smpp->conn->id),
                       pdu->u.bind_transceiver_resp.command_status,
-		      smpp_error_to_string(pdu->u.bind_transceiver_resp.command_status));
-                if (pdu->u.bind_transceiver_resp.command_status == SMPP_ESME_RINVSYSID ||
-                    pdu->u.bind_transceiver_resp.command_status == SMPP_ESME_RINVPASWD)
-                    smpp->quitting = 1;
+		         smpp_error_to_string(pdu->u.bind_transceiver_resp.command_status));
+                 mutex_lock(smpp->conn->flow_mutex);
+                 smpp->conn->status = SMSCCONN_DISCONNECTED;
+                 mutex_unlock(smpp->conn->flow_mutex);
+                 if (pdu->u.bind_transceiver_resp.command_status == SMPP_ESME_RINVSYSID ||
+                     pdu->u.bind_transceiver_resp.command_status == SMPP_ESME_RINVPASWD) {
+                     smpp->quitting = 1;
+                 }
             } else {
                 *pending_submits = 0;
                 mutex_lock(smpp->conn->flow_mutex);
                 smpp->conn->status = SMSCCONN_ACTIVE;
-                smpp->conn->connect_time = time(NULL);
+                time(&smpp->conn->connect_time);
                 mutex_unlock(smpp->conn->flow_mutex);
                 bb_smscconn_connected(smpp->conn);
             }
             break;
 
         case bind_receiver_resp:
-            if (pdu->u.bind_receiver_resp.command_status != 0) {
-                error(0, "SMPP[%s]: SMSC rejected login to receive, "
-                      "code 0x%08lx (%s).",
+            if (pdu->u.bind_receiver_resp.command_status != 0 &&
+                pdu->u.bind_receiver_resp.command_status != SMPP_ESME_RALYNBD) {
+                error(0, "SMPP[%s]: SMSC rejected login to receive, code 0x%08lx (%s).",
                       octstr_get_cstr(smpp->conn->id),
                       pdu->u.bind_receiver_resp.command_status,
-		      smpp_error_to_string(pdu->u.bind_receiver_resp.command_status));
-                if (pdu->u.bind_receiver_resp.command_status == SMPP_ESME_RINVSYSID ||
-                    pdu->u.bind_receiver_resp.command_status == SMPP_ESME_RINVPASWD)
-                    smpp->quitting = 1;
+                 smpp_error_to_string(pdu->u.bind_receiver_resp.command_status));
+                 mutex_lock(smpp->conn->flow_mutex);
+                 smpp->conn->status = SMSCCONN_DISCONNECTED;
+                 mutex_unlock(smpp->conn->flow_mutex);
+                 if (pdu->u.bind_receiver_resp.command_status == SMPP_ESME_RINVSYSID ||
+                     pdu->u.bind_receiver_resp.command_status == SMPP_ESME_RINVPASWD) {
+                     smpp->quitting = 1;
+                 }
             } else {
                 /* set only resceive status if no transmitt is bind */
                 mutex_lock(smpp->conn->flow_mutex);
                 if (smpp->conn->status != SMSCCONN_ACTIVE) {
                     smpp->conn->status = SMSCCONN_ACTIVE_RECV;
-                    smpp->conn->connect_time = time(NULL);
+                    time(&smpp->conn->connect_time);
                 }
                 mutex_unlock(smpp->conn->flow_mutex);
             }
@@ -1645,6 +1721,7 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
             mutex_lock(smpp->conn->flow_mutex);
             smpp->conn->status = SMSCCONN_DISCONNECTED;
             mutex_unlock(smpp->conn->flow_mutex);
+            *pending_submits = -1;
             break;
 
         case unbind_resp:
@@ -1661,20 +1738,18 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
             octstr_destroy(os);
 
             if (smpp_msg == NULL) {
-                error(0, "SMPP[%s]: SMSC rejected last command"
-		      "code 0x%08lx (%s).",
+                error(0, "SMPP[%s]: SMSC rejected last command, code 0x%08lx (%s).",
                       octstr_get_cstr(smpp->conn->id),
                       cmd_stat,
-		      smpp_error_to_string(cmd_stat));
+                smpp_error_to_string(cmd_stat));
             } else {
                 msg = smpp_msg->msg;
                 smpp_msg_destroy(smpp_msg, 0);
 
-                error(0, "SMPP[%s]: SMSC returned error code 0x%08lx (%s) "
-                      "in response to submit_sm.",
+                error(0, "SMPP[%s]: SMSC returned error code 0x%08lx (%s) in response to submit_sm.",
                       octstr_get_cstr(smpp->conn->id),
                       cmd_stat,
-		      smpp_error_to_string(cmd_stat));
+                smpp_error_to_string(cmd_stat));
 
                 /*
                  * check to see if we got a "throttling error", in which case we'll just
@@ -1687,27 +1762,27 @@ static void handle_pdu(SMPP *smpp, Connection *conn, SMPP_PDU *pdu,
 
                 reason = smpp_status_to_smscconn_failure_reason(cmd_stat);
                 bb_smscconn_send_failed(smpp->conn, msg, reason,
-		        octstr_format("%ld/%s", cmd_stat, smpp_error_to_string(cmd_stat)));
+                                        octstr_format("0x%08lx/%s", cmd_stat, smpp_error_to_string(cmd_stat)));
                 --(*pending_submits);
             }
             break;
         default:
             error(0, "SMPP[%s]: Unknown PDU type 0x%08lx, ignored.",
                   octstr_get_cstr(smpp->conn->id), pdu->type);
-
             /*
              * We received an unknown PDU type, therefore we will respond
              * with a generic_nack PDU, see SMPP v3.4 spec, section 3.3.
              */
-            resp = smpp_pdu_create(generic_nack, pdu->u.generic_nack.sequence_number);
-            resp->u.generic_nack.command_status = SMPP_ESME_RINVCMDID;
+            ret = send_gnack(smpp, conn, SMPP_ESME_RINVCMDID, pdu->u.generic_nack.sequence_number);
             break;
     }
 
     if (resp != NULL) {
-    	send_pdu(conn, smpp->conn->id, resp);
+        ret = send_pdu(conn, smpp->conn->id, resp) != -1 ? 0 : -1;
         smpp_pdu_destroy(resp);
     }
+
+    return ret;
 }
 
 
@@ -1732,7 +1807,7 @@ static struct io_arg *io_arg_create(SMPP *smpp, int transmitter)
  * sent queue cleanup.
  * @return 1 if io_thread should reconnect; 0 if not
  */
-static int do_queue_cleanup(SMPP *smpp, long *pending_submits, int action)
+static int do_queue_cleanup(SMPP *smpp, long *pending_submits)
 {
     List *keys;
     Octstr *key;
@@ -1743,7 +1818,7 @@ static int do_queue_cleanup(SMPP *smpp, long *pending_submits, int action)
         return 0;
 
     /* check if action set to wait ack for ever */
-    if (action == SMPP_WAITACK_NEVER_EXPIRE)
+    if (smpp->wait_ack_action == SMPP_WAITACK_NEVER_EXPIRE)
         return 0;
 
     keys = dict_keys(smpp->sent_msgs);
@@ -1753,7 +1828,7 @@ static int do_queue_cleanup(SMPP *smpp, long *pending_submits, int action)
     while ((key = gwlist_extract_first(keys)) != NULL) {
         smpp_msg = dict_get(smpp->sent_msgs, key);
         if (smpp_msg != NULL && difftime(now, smpp_msg->sent_time) > smpp->wait_ack) {
-            switch(action) {
+            switch(smpp->wait_ack_action) {
                 case SMPP_WAITACK_RECONNECT: /* reconnect */
                     /* found at least one not acked msg */
                     warning(0, "SMPP[%s]: Not ACKED message found, reconnecting.",
@@ -1776,8 +1851,8 @@ static int do_queue_cleanup(SMPP *smpp, long *pending_submits, int action)
                     }
                     break;
                 default:
-                    error(0, "SMPP[%s] Unknown clenup action defined %xd.",
-                             octstr_get_cstr(smpp->conn->id), action);
+                    error(0, "SMPP[%s] Unknown clenup action defined 0x%02x.",
+                          octstr_get_cstr(smpp->conn->id), smpp->wait_ack_action);
                     octstr_destroy(key);
                     gwlist_destroy(keys, octstr_destroy_item);
                     return 0;
@@ -1804,12 +1879,11 @@ static void io_thread(void *arg)
     int transmitter;
     Connection *conn;
     int ret;
-    long last_enquire_sent;
     long pending_submits;
     long len;
     SMPP_PDU *pdu;
     double timeout;
-    time_t last_response, last_cleanup;
+    time_t last_cleanup, last_enquire_sent, last_response, now;
 
     io_arg = arg;
     smpp = io_arg->smpp;
@@ -1819,6 +1893,8 @@ static void io_thread(void *arg)
     /* Make sure we log into our own log-file if defined */
     log_thread_to(smpp->conn->log_idx);
 
+#define IS_ACTIVE (smpp->conn->status == SMSCCONN_ACTIVE || smpp->conn->status == SMSCCONN_ACTIVE_RECV)
+
     conn = NULL;
     while (!smpp->quitting) {
         if (transmitter == 1)
@@ -1827,28 +1903,115 @@ static void io_thread(void *arg)
             conn = open_transceiver(smpp);
         else
             conn = open_receiver(smpp);
-
-        last_enquire_sent = last_cleanup = last_response = date_universal_now();
+        
         pending_submits = -1;
         len = 0;
-        smpp->throttling_err_time = 0;
-        for (;conn != NULL;) {
-            timeout = last_enquire_sent + smpp->enquire_link_interval
-                        - date_universal_now();
-
-            if (conn_wait(conn, timeout) == -1)
+        last_response = last_cleanup = last_enquire_sent = time(NULL);
+        while(conn != NULL) {
+            ret = read_pdu(smpp, conn, &len, &pdu);
+            if (ret == -1) { /* connection broken */
+                error(0, "SMPP[%s]: I/O error or other error. Re-connecting.",
+                      octstr_get_cstr(smpp->conn->id));
                 break;
-
+            } else if (ret == -2) {
+                /* wrong pdu length , send gnack */
+                len = 0;
+                if (send_gnack(smpp, conn, SMPP_ESME_RINVCMDLEN, 0) == -1) {
+                    error(0, "SMPP[%s]: I/O error or other error. Re-connecting.",
+                          octstr_get_cstr(smpp->conn->id));
+                    break;
+                }
+            } else if (ret == 1) { /* data available */
+                /* Deal with the PDU we just got */
+                dump_pdu("Got PDU:", smpp->conn->id, pdu);
+                ret = handle_pdu(smpp, conn, pdu, &pending_submits);
+                smpp_pdu_destroy(pdu);
+                if (ret == -1) {
+                    error(0, "SMPP[%s]: I/O error or other error. Re-connecting.",
+                          octstr_get_cstr(smpp->conn->id));
+                    break;
+                }
+                
+                /*
+                 * check if we are still connected
+                 * Note: Function handle_pdu will set status to SMSCCONN_DISCONNECTED
+                 * when unbind was received.
+                 */
+                if (smpp->conn->status == SMSCCONN_DISCONNECTED)
+                    break;
+                
+                /*
+                 * If we are not bounded then no PDU may coming from SMSC.
+                 * It's just a workaround for buggy SMSC's whoes send enquire_link's
+                 * although link is not bounded. Means: we doesn't notice these and if link
+                 * keep to be not bounden we are reconnect after defined timeout elapsed.
+                 */
+                if (IS_ACTIVE) {
+                    /*
+                     * Store last response time.
+                     */
+                    time(&last_response);
+                }
+            } else { /* no data available */
+                /* check last enquire_resp, if difftime > as idle_timeout
+                 * mark connection as broken.
+                 * We have some SMSC connections where connection seems to be OK, but
+                 * in reallity is broken, because no responses received.
+                 */
+                if (smpp->connection_timeout > 0 &&
+                    difftime(time(NULL), last_response) > smpp->connection_timeout) {
+                    /* connection seems to be broken */
+                    warning(0, "Got no responses within %ld sec., reconnecting...",
+                            (long) difftime(time(NULL), last_response));
+                    break;
+                }
+                
+                time(&now);
+                timeout = last_enquire_sent + smpp->enquire_link_interval - now;
+                if (!IS_ACTIVE && timeout <= 0)
+                    timeout = smpp->enquire_link_interval;
+                if (transmitter && gw_prioqueue_len(smpp->msgs_to_send) > 0 &&
+                    smpp->throttling_err_time > 0 && pending_submits < smpp->max_pending_submits) {
+                    time_t tr_timeout = smpp->throttling_err_time + SMPP_THROTTLING_SLEEP_TIME - now;
+                    timeout = timeout > tr_timeout ? tr_timeout : timeout;
+                } else if (transmitter && gw_prioqueue_len(smpp->msgs_to_send) > 0 && smpp->conn->throughput > 0 &&
+                           smpp->max_pending_submits > pending_submits) {
+                    double t = 1.0 / smpp->conn->throughput;
+                    timeout = t < timeout ? t : timeout;
+                }
+                /* sleep a while */
+                if (timeout > 0 && conn_wait(conn, timeout) == -1)
+                    break;
+            }
+            
+            /* send enquire link, only if connection is active */
+            if (IS_ACTIVE && send_enquire_link(smpp, conn, &last_enquire_sent) == -1)
+                break;
+            
+            /* cleanup sent queue */
+            if (transmitter && difftime(time(NULL), last_cleanup) > smpp->wait_ack) {
+                if (do_queue_cleanup(smpp, &pending_submits))
+                    break; /* reconnect */
+                time(&last_cleanup);
+            }
+            
+            /* make sure we send */
+            if (transmitter && difftime(time(NULL), smpp->throttling_err_time) > SMPP_THROTTLING_SLEEP_TIME) {
+                smpp->throttling_err_time = 0;
+                if (send_messages(smpp, conn, &pending_submits) == -1)
+                    break;
+            }
+            
             /* unbind
              * Read so long as unbind_resp received or timeout passed. Otherwise we have
              * double delivered messages.
              */
             if (smpp->quitting) {
-                send_unbind(smpp, conn);
-                last_response = time(NULL);
-                while(conn_wait(conn, 1.00) != -1 &&
-                      difftime(time(NULL), last_response) < SMPP_DEFAULT_SHUTDOWN_TIMEOUT &&
-                      smpp->conn->status != SMSCCONN_DISCONNECTED) {
+                if (!IS_ACTIVE || send_unbind(smpp, conn) == -1)
+                    break;
+                time(&last_response);
+                while(conn_wait(conn, 1.00) != -1 && IS_ACTIVE &&
+                      difftime(time(NULL), last_response) < SMPP_DEFAULT_SHUTDOWN_TIMEOUT) {
                     if (read_pdu(smpp, conn, &len, &pdu) == 1) {
                         dump_pdu("Got PDU:", smpp->conn->id, pdu);
                         handle_pdu(smpp, conn, pdu, &pending_submits);
@@ -1856,65 +2019,9 @@ static void io_thread(void *arg)
                     }
                 }
                 debug("bb.sms.smpp", 0, "SMPP[%s]: %s: break and shutting down",
-                      octstr_get_cstr(smpp->conn->id), __func__);
-
+                      octstr_get_cstr(smpp->conn->id), __PRETTY_FUNCTION__);
+                
                 break;
-            }
-
-            send_enquire_link(smpp, conn, &last_enquire_sent);
-
-            while ((ret = read_pdu(smpp, conn, &len, &pdu)) == 1) {
-                last_response = time(NULL);
-                /* Deal with the PDU we just got */
-                dump_pdu("Got PDU:", smpp->conn->id, pdu);
-                handle_pdu(smpp, conn, pdu, &pending_submits);
-                smpp_pdu_destroy(pdu);
-
-                /*
-                 * check if we are still connected.
-                 * Note: smsc can send unbind request, so we must check it.
-                 */
-                if (smpp->conn->status != SMSCCONN_ACTIVE && smpp->conn->status != SMSCCONN_ACTIVE_RECV) {
-                     /* we are disconnected */
-                     ret = -1;
-                     break;
-                }
-
-                /* Make sure we send enquire_link even if we read a lot */
-                send_enquire_link(smpp, conn, &last_enquire_sent);
-
-                /* Make sure we send even if we read a lot */
-                if (transmitter && difftime(time(NULL), smpp->throttling_err_time) > SMPP_THROTTLING_SLEEP_TIME) {
-                    smpp->throttling_err_time = 0;
-                    send_messages(smpp, conn, &pending_submits);
-                }
-            }
-
-            if (ret == -1) {
-                error(0, "SMPP[%s]: I/O error or other error. Re-connecting.",
-                      octstr_get_cstr(smpp->conn->id));
-                break;
-            }
-
-            /* if no PDU was received and connection timeout was set and over the limit */
-            if (ret == 0 && smpp->connection_timeout > 0 &&
-                difftime(time(NULL), last_response) > smpp->connection_timeout) {
-                error(0, "SMPP[%s]: No responses from SMSC within %ld sec. Reconnecting.",
-                         octstr_get_cstr(smpp->conn->id), smpp->connection_timeout);
-                break;
-            }
-
-
-            /* cleanup sent queue */
-            if (transmitter && difftime(time(NULL), last_cleanup) > smpp->wait_ack) {
-                if (do_queue_cleanup(smpp, &pending_submits, smpp->wait_ack_action))
-                    break; /* reconnect */
-                last_cleanup = time(NULL);
-            }
-
-            if (transmitter && difftime(time(NULL), smpp->throttling_err_time) > SMPP_THROTTLING_SLEEP_TIME) {
-                smpp->throttling_err_time = 0;
-                send_messages(smpp, conn, &pending_submits);
             }
         }
 
@@ -1922,14 +2029,19 @@ static void io_thread(void *arg)
             conn_destroy(conn);
             conn = NULL;
         }
-        /* set reconnect status */
-        mutex_lock(smpp->conn->flow_mutex);
-        smpp->conn->status = SMSCCONN_RECONNECTING;
-        mutex_unlock(smpp->conn->flow_mutex);
+        /* set reconnecting status first so that core don't put msgs into our queue */
+        if (!smpp->quitting) {
+            error(0, "SMPP[%s]: Couldn't connect to SMS center (retrying in %ld seconds).",
+                  octstr_get_cstr(smpp->conn->id), smpp->conn->reconnect_delay);
+            mutex_lock(smpp->conn->flow_mutex);
+            smpp->conn->status = SMSCCONN_RECONNECTING;
+            mutex_unlock(smpp->conn->flow_mutex);
+            gwthread_sleep(smpp->conn->reconnect_delay);
+        }
         /*
-         * Put all queued messages back into global queue,so if
-         * we have another link running then messages will be delivered
-         * quickly.
+         * put all queued messages back into global queue,so if
+         * we have another link running than messages will be delivered
+         * quickly
          */
         if (transmitter) {
             Msg *msg;
@@ -1945,7 +2057,7 @@ static void io_thread(void *arg)
             noresp = dict_keys(smpp->sent_msgs);
             while((key = gwlist_extract_first(noresp)) != NULL) {
                 smpp_msg = dict_remove(smpp->sent_msgs, key);
-                if (smpp_msg != NULL && smpp_msg->msg) {
+                if (smpp_msg != NULL) {
                     bb_smscconn_send_failed(smpp->conn, smpp_msg->msg, reason, NULL);
                     smpp_msg_destroy(smpp_msg, 0);
                 }
@@ -1953,18 +2065,31 @@ static void io_thread(void *arg)
             }
             gwlist_destroy(noresp, NULL);
         }
-        /*
-         * Reconnect if that was a connection problem.
-         */
-        if (!smpp->quitting) {
-            error(0, "SMPP[%s]: Couldn't connect to SMS center (retrying in %ld seconds).",
-                  octstr_get_cstr(smpp->conn->id), smpp->conn->reconnect_delay);
-            gwthread_sleep(smpp->conn->reconnect_delay);
-        }
     }
-    mutex_lock(smpp->conn->flow_mutex);
-    smpp->conn->status = SMSCCONN_DEAD;
-    mutex_unlock(smpp->conn->flow_mutex);
+    
+#undef IS_ACTIVE
+    
+    /*
+     * Shutdown sequence as follow:
+     *    1) if this is TX session so join receiver and free SMPP
+     *    2) if RX session available but no TX session so nothing to join then free SMPP
+     */
+    if (transmitter && smpp->receiver != -1) {
+        gwthread_wakeup(smpp->receiver);
+        gwthread_join(smpp->receiver);
+    }
+    if (transmitter || smpp->transmitter == -1) {
+        debug("bb.smpp", 0, "SMSCConn %s shut down.",
+              octstr_get_cstr(smpp->conn->name));
+        
+        mutex_lock(smpp->conn->flow_mutex);
+        smpp->conn->status = SMSCCONN_DEAD;
+        smpp->conn->data = NULL;
+        mutex_unlock(smpp->conn->flow_mutex);
+        
+        smpp_destroy(smpp);
+        bb_smscconn_killed();
+    }
 }
 
 
@@ -1999,30 +2124,32 @@ static int shutdown_cb(SMSCConn *conn, int finish_sending)
 {
     SMPP *smpp;
 
+    if (conn == NULL)
+        return -1;
+
     debug("bb.smpp", 0, "Shutting down SMSCConn %s (%s)",
           octstr_get_cstr(conn->name),
           finish_sending ? "slow" : "instant");
 
+    mutex_lock(conn->flow_mutex);
+
     conn->why_killed = SMSCCONN_KILLED_SHUTDOWN;
 
-    /* XXX implement finish_sending */
-
     smpp = conn->data;
-    smpp->quitting = 1;
-    if (smpp->transmitter != -1) {
-        gwthread_wakeup(smpp->transmitter);
-        gwthread_join(smpp->transmitter);
+    if (smpp == NULL) {
+        mutex_unlock(conn->flow_mutex);
+        return 0;
     }
-    if (smpp->receiver != -1) {
-        gwthread_wakeup(smpp->receiver);
-        gwthread_join(smpp->receiver);
-    }
-    smpp_destroy(smpp);
 
-    debug("bb.smpp", 0, "SMSCConn %s shut down.",
-          octstr_get_cstr(conn->name));
-    conn->status = SMSCCONN_DEAD;
-    bb_smscconn_killed();
+    smpp->quitting = 1;
+    if  (smpp->transmitter != -1)
+    	gwthread_wakeup(smpp->transmitter);
+
+    if (smpp->receiver != -1)
+    	gwthread_wakeup(smpp->receiver);
+
+    mutex_unlock(conn->flow_mutex);
+
     return 0;
 }
 
@@ -2206,10 +2333,16 @@ int smsc_smpp_create(SMSCConn *conn, CfgGroup *grp)
     cfg_get_integer(&smpp->bind_addr_ton, grp, octstr_imm("bind-addr-ton"));
     cfg_get_integer(&smpp->bind_addr_npi, grp, octstr_imm("bind-addr-npi"));
 
+    cfg_get_bool(&smpp->use_ssl, grp, octstr_imm("use-ssl"));
+#ifndef HAVE_LIBSSL
+    if (smpp->use_ssl)
+        panic(0, "SMPP: Can not use 'use-ssl' without SSL support compiled in.");
+#endif
+
     conn->data = smpp;
     conn->name = octstr_format("SMPP:%S:%d/%d:%S:%S",
     	    	    	       host, port,
-                               (receive_port ? receive_port : port),
+                               (!receive_port && transceiver_mode  ? port : receive_port),
                                username, system_type);
 
     smsc_id = cfg_get(grp, octstr_imm("smsc-id"));
@@ -2255,6 +2388,7 @@ int smsc_smpp_create(SMSCConn *conn, CfgGroup *grp)
             gwthread_join(smpp->receiver);
         }
     	smpp_destroy(conn->data);
+        conn->data = NULL;
         return -1;
     }
 
