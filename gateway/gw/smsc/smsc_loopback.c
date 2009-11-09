@@ -55,81 +55,115 @@
  */ 
 
 /*
- * numhash.h - (telephone) number storing/hashing system
+ * smsc_loopback.c - loopback SMSC interface
+ * 
+ * This SMSC type is the MT wise counterpart of the 'reroute' functionality
+ * of the smsc group when MOs are re-routed as MT. This SMSC type re-routes
+ * therefore MTs as MOs back again.
  *
- * Kalle Marjola 2000 for project Kannel
- *
- * !!! NOTE NOTE NOTE !!!
- *
- * Phone number precision is limited according to sizeof(long long)
- * in host machine. that is usually either 32 or 64 bits. In a
- * case of 32 bit longs, only last 19 digits are checked, otherwise
- * last 38 digits. This means that in some places several numbers
- * might map to same hash entry, and thus some caution is needed
- * specially with telephone number black lists
- *
- * USAGE:
- *  the system is not very dynamic; if you want to resize the table
- *  or hash, you must first nuke all old data and then recreate it
- *
- * MEMORY NEEDED:  (approximated)
- *
- * 2* (sizeof(long long)+sizeof(void *)) bytes per number
+ * Stipe Tolj <stolj at kannel dot org>
  */
 
-#ifndef NUMHASH_H
-#define NUMHASH_H
-
-#include <stdio.h>
-
-/* number hashing/seeking functions
- * all return -1 on error and write to general Kannel log
- *
- * these 2 first are only required if you want to add the numbers
- * by hand - otherwise use the last function instead
- *
- * use prime_hash if you want an automatically generated hash size
- */
-
-typedef struct numhash_table Numhash;	
+#include "gwlib/gwlib.h"
+#include "smscconn.h"
+#include "smscconn_p.h"
+#include "bb_smscconn_cb.h"
+#include "dlr.h"
 
 
-/* get numbers from 'url' and create a new database out of them
- * Return NULL if cannot open database or other error, error is logged
- *
- * Numbers to datafile are saved as follows:
- *  - one number per line
- *  - number might have white spaces, '+' and '-' signs
- *  - number is ended with ':' or end-of-line
- *  - there can be additional comment after ':'
- *
- * For example, all following ones are valid lines:
- *  040 1234
- *  +358 40 1234
- *  +358 40-1234 : Kalle Marjola
- */
-Numhash *numhash_create(const char *url); 
+static int msg_cb(SMSCConn *conn, Msg *msg)
+{
+    Msg *sms;
+    
+    /* create duplicates first */
+    sms = msg_duplicate(msg);
+    
+    /* store temporary DLR data for SMSC ACK */
+    if (DLR_IS_ENABLED_DEVICE(msg->sms.dlr_mask) && !uuid_is_null(sms->sms.id)) {
+        Octstr *mid;
+        char id[UUID_STR_LEN + 1];
 
-/* destroy hash and all numbers in it */
-void numhash_destroy(Numhash *table);
+        uuid_unparse(sms->sms.id, id);
+        mid = octstr_create(id);
 
-/* check if the number is in database, return 1 if found, 0 if not,
- * -1 on error */
-int numhash_find_number(Numhash *table, Octstr *nro);
-				      
-/* if we already have the key */
-int numhash_find_key(Numhash *table, long long key);
+        dlr_add(conn->id, mid, sms);
+        
+        octstr_destroy(mid);
+    }
 
-/* if we want to know the key */
-long long numhash_get_key(Octstr *nro);
-long long numhash_get_char_key(char *nro);
+	/* 
+	 * Inform abstraction layer of sent event,
+	 * it will also take care of DLR SMSC events.
+	 */
+    bb_smscconn_sent(conn, sms, NULL);
+
+    /* now change msg type to reflect flow type */
+    sms = msg_duplicate(msg);
+    sms->sms.sms_type = mo;
+    
+    /* 
+     * If there is a reroute-smsc-id in the config group,
+     * then let's use that value, otherwise assign the
+     * smsc-id canonical name for the MO. 
+     * This re-assignment of the smsc-id provides some
+     * MO routing capabilities, i.e. via smsbox-route group.
+     */
+    octstr_destroy(sms->sms.smsc_id);
+    
+    if (conn->reroute_to_smsc) {
+        sms->sms.smsc_id = octstr_duplicate(conn->reroute_to_smsc);
+    } else {
+        sms->sms.smsc_id = octstr_duplicate(conn->id);
+    }
+    
+    /* now pass back again as MO to the abstraction layer */
+    bb_smscconn_receive(conn, sms);
+
+    return 0;
+}
 
 
-/* Return hash fill percent. If 'longest' != NULL, set as longest
- * trail in hash */
-double numhash_hash_fill(Numhash *table, int *longest);
+static int shutdown_cb(SMSCConn *conn, int finish_sending)
+{
+    debug("smsc.loopback", 0, "Shutting down SMSCConn %s", 
+          octstr_get_cstr(conn->name));
 
-/* return number of numbers in hash */
-int numhash_size(Numhash *table);
+    conn->why_killed = SMSCCONN_KILLED_SHUTDOWN;
+    conn->status = SMSCCONN_DEAD;
+    bb_smscconn_killed();
+        
+    return 0;
+}
 
-#endif
+
+static void start_cb(SMSCConn *conn)
+{
+    conn->status = SMSCCONN_ACTIVE;
+    conn->connect_time = time(NULL);
+}
+
+
+static long queued_cb(SMSCConn *conn)
+{
+    long ret = 0;
+
+    conn->load = ret;
+    return ret;
+}
+
+
+int smsc_loopback_create(SMSCConn *conn, CfgGroup *cfg)
+{
+    conn->data = NULL;
+    conn->name = octstr_format("LOOPBACK:%S", conn->id);
+  
+    conn->status = SMSCCONN_CONNECTING;
+    conn->connect_time = time(NULL);
+
+    conn->shutdown = shutdown_cb;
+    conn->queued = queued_cb;
+    conn->start_conn = start_cb;
+    conn->send_msg = msg_cb;
+
+    return 0;
+}

@@ -4,7 +4,7 @@
 %define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20090721
+%define cvs_build 20091101
 
 Summary: WAP and SMS gateway
 Name: kannel
@@ -28,8 +28,8 @@ BuildPreReq: linux-libc-headers openssl-engines
 
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
-# Automatically added by buildreq on Fri May 29 2009 (-bi)
-BuildRequires: ImageMagick-tools checkstyle4 docbook-style-dsssl flex fonts-type1-cm-super-pfb jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
+# Automatically added by buildreq on Sun Nov 08 2009 (-bi)
+BuildRequires: ImageMagick-tools docbook-style-dsssl flex jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -130,7 +130,7 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %doc AUTHORS COPYING ChangeLog NEWS README STATUS _docs/* contrib
 %_bindir/*
 %_sbindir/*
-#%exclude %_sbindir/start-stop-daemon
+#%%exclude %%_sbindir/start-stop-daemon
 %_mandir/man?/*
 %dir %_sysconfdir/kannel
 %config(noreplace) %_sysconfdir/kannel/*
@@ -147,6 +147,14 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sun Nov 08 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs20091101
+- Fixed build requirements
+- Added loopback smsc module
+- Fixed possible crash in HTTP black/white list processing
+- Fixed processing of SQL reserved words as table/column names
+- Implemented smsc-id option for smpp-tlv
+- Some minor fixes (see ChangeLog)
+
 * Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs20090721
 - Version changed to 1.5.0
 - Added PAM support patch for sendsms API
