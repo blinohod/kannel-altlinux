@@ -24,12 +24,12 @@ Patch2: kannel-dlr-retry.patch
 Patch3: kannel-pam.patch
 
 PreReq: monit-base
-BuildPreReq: linux-libc-headers openssl-engines
+BuildPreReq: linux-libc-headers openssl-engines 
 
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
-# Automatically added by buildreq on Sun Nov 08 2009 (-bi)
-BuildRequires: ImageMagick-tools docbook-style-dsssl flex jadetex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 transfig
+# Automatically added by buildreq on Wed Nov 11 2009 (-bi)
+BuildRequires: ImageMagick-tools flex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -69,7 +69,8 @@ applications that use Kannel.
 		--with-cflags='-fPIC' \
 		--enable-cookies \
 		--enable-largefile \
-		--enable-docs \
+		--disable-docs \
+		--disable-drafts \
 		--enable-keepalive \
 		--disable-mutex-stats \
 		--enable-localtime \
@@ -92,7 +93,7 @@ applications that use Kannel.
 %makeinstall
 
 %make_install install-docs DESTDIR=%buildroot
-mv %buildroot%_datadir/doc/kannel _docs
+#mv %%buildroot%%_datadir/doc/kannel _docs
 
 mkdir -p %buildroot%_sysconfdir/kannel
 mkdir -p %buildroot%_sysconfdir/logrotate.d
@@ -127,7 +128,8 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %preun_service kannel.bearerbox
                                                                                 
 %files
-%doc AUTHORS COPYING ChangeLog NEWS README STATUS _docs/* contrib
+%doc AUTHORS COPYING ChangeLog NEWS README STATUS contrib
+#%%doc _docs/*  
 %_bindir/*
 %_sbindir/*
 #%%exclude %%_sbindir/start-stop-daemon
