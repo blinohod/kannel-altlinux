@@ -156,6 +156,7 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 - Fixed processing of SQL reserved words as table/column names
 - Implemented smsc-id option for smpp-tlv
 - Some minor fixes (see ChangeLog)
+- Disable docs building (to be updated and moved to subpackage)
 
 * Sat Jul 25 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs20090721
 - Version changed to 1.5.0
