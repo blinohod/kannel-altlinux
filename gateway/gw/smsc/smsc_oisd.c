@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -894,9 +894,7 @@ static Msg *oisd_accept_message(struct packet *request, SMSCConn *conn)
 
     if ((!(msg->sms.msgdata) || octstr_len(msg->sms.msgdata) == 0)
         && (!(msg->sms.udhdata) || octstr_len(msg->sms.udhdata) == 0)) {
-        info(0, "OISD[%s]: Got empty SMS, ignoring.",
-              octstr_get_cstr(conn->id));
-        goto error;
+        msg->sms.msgdata = octstr_create("");
     }
 
     return msg;
@@ -1308,7 +1306,7 @@ static Msg *oisd_accept_delivery_report_message(struct packet *request,
     }
 
     if (code)
-        msg = dlr_find(conn->name, timestamp, destination, code);
+        msg = dlr_find(conn->name, timestamp, destination, code, 0);
 
     octstr_destroy(destination);
     octstr_destroy(timestamp);

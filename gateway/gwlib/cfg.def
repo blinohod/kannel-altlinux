@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -84,6 +84,7 @@ SINGLE_GROUP(core,
     OCTSTR(admin-allow-ip)
     OCTSTR(smsbox-port)
     OCTSTR(smsbox-port-ssl)
+    OCTSTR(smsbox-interface)
     OCTSTR(smsbox-max-pending)
     OCTSTR(wapbox-port)
     OCTSTR(wapbox-port-ssl)
@@ -94,6 +95,8 @@ SINGLE_GROUP(core,
     OCTSTR(wdp-interface-name)
     OCTSTR(log-file)
     OCTSTR(log-level)
+    OCTSTR(syslog-level)
+    OCTSTR(syslog-facility)
     OCTSTR(access-log)
     OCTSTR(access-log-time)
     OCTSTR(access-log-format)
@@ -126,6 +129,7 @@ SINGLE_GROUP(core,
     OCTSTR(sms-resend-retry)
     OCTSTR(sms-combine-concatenated-mo)
     OCTSTR(sms-combine-concatenated-mo-timeout)
+    OCTSTR(http-timeout)
 )
 
 
@@ -151,6 +155,7 @@ SINGLE_GROUP(wapbox,
     OCTSTR(log-file)
     OCTSTR(log-level)
     OCTSTR(syslog-level)
+    OCTSTR(syslog-facility)
     OCTSTR(smart-errors)
     OCTSTR(access-log)
     OCTSTR(access-log-time)
@@ -159,6 +164,7 @@ SINGLE_GROUP(wapbox,
     OCTSTR(concatenation)
     OCTSTR(max-messages)
     OCTSTR(wml-strict)
+    OCTSTR(http-timeout)
 )
 
 
@@ -261,6 +267,8 @@ SINGLE_GROUP(smsbox,
     OCTSTR(global-sender)
     OCTSTR(log-file)
     OCTSTR(log-level)
+    OCTSTR(syslog-level)
+    OCTSTR(syslog-facility)
     OCTSTR(access-log)
     OCTSTR(access-log-time)
     OCTSTR(access-log-clean)
@@ -280,6 +288,7 @@ SINGLE_GROUP(smsbox,
     OCTSTR(black-list-regex)
     OCTSTR(immediate-sendsms-reply)
     OCTSTR(max-pending-requests)
+    OCTSTR(http-timeout)
 )
 
 
@@ -386,6 +395,7 @@ MULTI_GROUP(smsc,
     OCTSTR(max-sms-octets)
     OCTSTR(login-prompt)
     OCTSTR(password-prompt)
+    OCTSTR(ssl-client-certkey-file)
     OCTSTR(generic-param-username)
     OCTSTR(generic-param-password)
     OCTSTR(generic-param-from)
@@ -405,6 +415,7 @@ MULTI_GROUP(smsc,
     OCTSTR(generic-param-validity)
     OCTSTR(generic-param-deferred)
     OCTSTR(generic-param-foreign-id)
+    OCTSTR(generic-param-meta-data)
     OCTSTR(generic-message-sent)
     OCTSTR(generic-status-sent)
     OCTSTR(generic-status-error)
@@ -529,6 +540,7 @@ MULTI_GROUP(modems,
     OCTSTR(keepalive-cmd)
     OCTSTR(broken)
     OCTSTR(message-storage)
+    OCTSTR(message-start)
     OCTSTR(enable-mms)
     OCTSTR(reset-string)
 )

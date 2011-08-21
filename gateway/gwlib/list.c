@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -109,6 +109,7 @@ struct List
     Mutex *permanent_lock;
     pthread_cond_t nonempty;
     long num_producers;
+    long num_consumers;
 };
 
 #define INDEX(list, i)	(((list)->start + i) % (list)->tab_size)
@@ -136,20 +137,22 @@ List *gwlist_create_real(void)
     list->permanent_lock = mutex_create();
     pthread_cond_init(&list->nonempty, NULL);
     list->num_producers = 0;
+    list->num_consumers = 0;
     return list;
 }
 
 
 void gwlist_destroy(List *list, gwlist_item_destructor_t *destructor)
 {
-    void *item;
+    long len, i;
 
     if (list == NULL)
         return;
 
     if (destructor != NULL) {
-        while ((item = gwlist_extract_first(list)) != NULL)
-            destructor(item);
+        len = gwlist_len(list); /* Using while(x != NULL) is unreliable, what if someone added NULL values? */
+        for (i = 0; i < len; i++)
+          destructor(gwlist_extract_first(list));
     }
 
     mutex_destroy(list->permanent_lock);
@@ -206,7 +209,7 @@ void gwlist_append_unique(List *list, void *item, int (*cmp)(void *, void *))
     }
     unlock(list);
 }
-        
+
 
 void gwlist_insert(List *list, long pos, void *item)
 {
@@ -409,11 +412,22 @@ void gwlist_produce(List *list, void *item)
 }
 
 
+int gwlist_consumer_count(List *list)
+{
+    int ret;
+    lock(list);
+    ret = list->num_consumers;
+    unlock(list);
+    return ret;
+}
+
+
 void *gwlist_consume(List *list)
 {
     void *item;
 
     lock(list);
+    ++list->num_consumers;
     while (list->len == 0 && list->num_producers > 0) {
         list->single_operation_lock->owner = -1;
         pthread_cond_wait(&list->nonempty,
@@ -426,6 +440,7 @@ void *gwlist_consume(List *list)
     } else {
         item = NULL;
     }
+    --list->num_consumers;
     unlock(list);
     return item;
 }
@@ -441,6 +456,7 @@ void *gwlist_timed_consume(List *list, long sec)
     abstime.tv_nsec = 0;
 
     lock(list);
+    ++list->num_consumers;
     while (list->len == 0 && list->num_producers > 0) {
         list->single_operation_lock->owner = -1;
         rc = pthread_cond_timedwait(&list->nonempty,
@@ -455,6 +471,7 @@ void *gwlist_timed_consume(List *list, long sec)
     } else {
         item = NULL;
     }
+    --list->num_consumers;
     unlock(list);
     return item;
 }
@@ -480,7 +497,6 @@ void *gwlist_search(List *list, void *pattern, int (*cmp)(void *, void *))
 
     return item;
 }
-
 
 
 List *gwlist_search_all(List *list, void *pattern, int (*cmp)(void *, void *))
@@ -509,6 +525,48 @@ List *gwlist_search_all(List *list, void *pattern, int (*cmp)(void *, void *))
 }
 
 
+long gwlist_search_equal(List *list, void *item)
+{
+    long i;
+    long ret = -1;
+
+    lock(list);
+    for (i = 0; i < list->len; i++) {
+        if (GET(list, i) == item) {
+            ret = i;
+            break;
+        }
+    }
+    unlock(list);
+
+    return ret;
+}
+
+
+static void quicksort(List *list, long left, long right, int(*cmp)(const void *, const void *))
+{
+    if (left < right) {
+        long l = left;
+        long r = right;
+        void *pivot = GET(list, right);
+
+        do {
+            while (cmp(GET(list, l), pivot) < 0) l++;
+            while (cmp(GET(list, r), pivot) > 0) r--;
+            if (l <= r) {
+                void *swap = GET(list, l);
+                GET(list, l) = GET(list, r);
+                GET(list, r) = swap;
+                l++;
+                r--;
+            }
+        } while(l <= r);
+
+        quicksort(list, left, r, cmp);
+        quicksort(list, l, right, cmp);
+    }
+}
+
 void gwlist_sort(List *list, int(*cmp)(const void *, const void *))
 {
     gw_assert(list != NULL && cmp != NULL);
@@ -519,7 +577,7 @@ void gwlist_sort(List *list, int(*cmp)(const void *, const void *))
         unlock(list);
         return;
     }
-    qsort(&GET(list, 0), list->len, sizeof(void*), cmp);
+    quicksort(list, 0, list->len - 1, cmp);
     unlock(list);
 }
 

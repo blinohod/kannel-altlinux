@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -170,9 +170,36 @@ SMSCConn *smscconn_create(CfgGroup *grp, int start_as_stopped)
     conn->is_stopped = start_as_stopped;
 
     conn->received = counter_create();
+    conn->received_dlr = counter_create();
     conn->sent = counter_create();
+    conn->sent_dlr = counter_create();
     conn->failed = counter_create();
     conn->flow_mutex = mutex_create();
+
+    conn->outgoing_sms_load = load_create();
+    /* add 60,300,-1 entries */
+    load_add_interval(conn->outgoing_sms_load, 60);
+    load_add_interval(conn->outgoing_sms_load, 300);
+    load_add_interval(conn->outgoing_sms_load, -1);
+
+    conn->incoming_sms_load = load_create();
+    /* add 60,300,-1 entries */
+    load_add_interval(conn->incoming_sms_load, 60);
+    load_add_interval(conn->incoming_sms_load, 300);
+    load_add_interval(conn->incoming_sms_load, -1);
+
+    conn->incoming_dlr_load = load_create();
+    /* add 60,300,-1 entries to dlr */
+    load_add_interval(conn->incoming_dlr_load, 60);
+    load_add_interval(conn->incoming_dlr_load, 300);
+    load_add_interval(conn->incoming_dlr_load, -1);
+
+    conn->outgoing_dlr_load = load_create();
+    /* add 60,300,-1 entries to dlr */
+    load_add_interval(conn->outgoing_dlr_load, 60);
+    load_add_interval(conn->outgoing_dlr_load, 300);
+    load_add_interval(conn->outgoing_dlr_load, -1);
+
 
 #define GET_OPTIONAL_VAL(x, n) x = cfg_get(grp, octstr_imm(n))
 #define SPLIT_OPTIONAL_VAL(x, n) \
@@ -334,8 +361,15 @@ int smscconn_destroy(SMSCConn *conn)
     mutex_lock(conn->flow_mutex);
 
     counter_destroy(conn->received);
+    counter_destroy(conn->received_dlr);
     counter_destroy(conn->sent);
+    counter_destroy(conn->sent_dlr);
     counter_destroy(conn->failed);
+
+    load_destroy(conn->incoming_sms_load);
+    load_destroy(conn->incoming_dlr_load);
+    load_destroy(conn->outgoing_sms_load);
+    load_destroy(conn->outgoing_dlr_load);
 
     octstr_destroy(conn->name);
     octstr_destroy(conn->id);
@@ -547,6 +581,7 @@ int smscconn_send(SMSCConn *conn, Msg *msg)
         split->parts_left = counter_create();
         split->status = SMSCCONN_SUCCESS;
         counter_set(split->parts_left, parts_len);
+        split->smsc_conn = conn;
         debug("bb.sms.splits", 0, "new split_parts created %p", split);
         for (i = 0; i < parts_len; i++) {
             msg = gwlist_get(parts, i);
@@ -599,6 +634,8 @@ int smscconn_info(SMSCConn *conn, StatusInfo *infotable)
     
     infotable->sent = counter_value(conn->sent);
     infotable->received = counter_value(conn->received);
+    infotable->sent_dlr = counter_value(conn->sent_dlr);
+    infotable->received_dlr = counter_value(conn->received_dlr);
     infotable->failed = counter_value(conn->failed);
 
     if (conn->queued)

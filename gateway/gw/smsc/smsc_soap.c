@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -1616,7 +1616,7 @@ static long soap_parse_dlr(SMSCConn *conn, Octstr *request, Octstr **response)
     /* fetch the DLR */
 
     dlrmsg = dlr_find(conn->id, octstr_imm(msgid), octstr_imm("receiver"), /* destination */
-                      dlrtype);
+                      dlrtype, 0);
 
     if (!dlrmsg) {
         error(0,"SOAP[%s]: parse_dlr invoked (%ld), but no DLR found for MsgID %s", octstr_get_cstr(privdata->name),dlrtype,msgid);

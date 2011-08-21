@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -260,6 +260,8 @@ void dlr_init(Cfg* cfg)
         handles = dlr_init_pgsql(cfg);
     } else if (octstr_compare(dlr_type, octstr_imm("mssql")) == 0) {
         handles = dlr_init_mssql(cfg);
+    } else if (octstr_compare(dlr_type, octstr_imm("sqlite3")) == 0) {
+        handles = dlr_init_sqlite3(cfg);
     }
 
     /*
@@ -319,13 +321,20 @@ void dlr_add(const Octstr *smsc, const Octstr *ts, Msg *msg)
 {
     struct dlr_entry *dlr = NULL;
 
-    /* Add the foreign_id so all SMSC modules can use it */
+    /* Add the foreign_id so all SMSC modules can use it.
+     * Obey also the original message in the split_parts list. */
     if (msg->sms.foreign_id != NULL)
         octstr_destroy(msg->sms.foreign_id);
     msg->sms.foreign_id = octstr_duplicate(ts);
+    if (msg->sms.split_parts != NULL) {
+        struct split_parts *split = msg->sms.split_parts;
+        if (split->orig->sms.foreign_id != NULL)
+            octstr_destroy(split->orig->sms.foreign_id);
+        split->orig->sms.foreign_id = octstr_duplicate(ts);
+    }
 
     if(octstr_len(smsc) == 0) {
-	warning(0, "DLR[%s]: Can't add a dlr without smsc-id", dlr_type());
+        warning(0, "DLR[%s]: Can't add a dlr without smsc-id", dlr_type());
         return;
     }
 
@@ -352,8 +361,8 @@ void dlr_add(const Octstr *smsc, const Octstr *ts, Msg *msg)
     dlr->mask = msg->sms.dlr_mask;
 
     debug("dlr.dlr", 0, "DLR[%s]: Adding DLR smsc=%s, ts=%s, src=%s, dst=%s, mask=%d, boxc=%s",
-              dlr_type(), octstr_get_cstr(dlr->smsc), octstr_get_cstr(dlr->timestamp),
-              octstr_get_cstr(dlr->source), octstr_get_cstr(dlr->destination), dlr->mask, octstr_get_cstr(dlr->boxc_id));
+          dlr_type(), octstr_get_cstr(dlr->smsc), octstr_get_cstr(dlr->timestamp),
+          octstr_get_cstr(dlr->source), octstr_get_cstr(dlr->destination), dlr->mask, octstr_get_cstr(dlr->boxc_id));
 	
     /* call registered function */
     handles->dlr_add(dlr);
@@ -364,10 +373,11 @@ void dlr_add(const Octstr *smsc, const Octstr *ts, Msg *msg)
  * NOTE: If typ is end status (e.g. DELIVERED) then dlr entry
  *       will be removed from DB.
  */
-Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ)
+Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ, int use_dst)
 {
     Msg	*msg = NULL;
     struct dlr_entry *dlr = NULL;
+    Octstr *dst_min = NULL;
     
     if(octstr_len(smsc) == 0) {
 	warning(0, "DLR[%s]: Can't find a dlr without smsc-id", dlr_type());
@@ -378,10 +388,17 @@ Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ)
     if (handles == NULL || handles->dlr_get == NULL)
         return NULL;
 
+    if (use_dst && dst) {
+        dst_min = octstr_duplicate(dst);
+        int len = octstr_len(dst);
+
+        if (len > MIN_DST_LEN)
+            octstr_delete(dst_min, 0, len - MIN_DST_LEN);
+    }
     debug("dlr.dlr", 0, "DLR[%s]: Looking for DLR smsc=%s, ts=%s, dst=%s, type=%d",
                                  dlr_type(), octstr_get_cstr(smsc), octstr_get_cstr(ts), octstr_get_cstr(dst), typ);
 
-    dlr = handles->dlr_get(smsc, ts, dst);
+    dlr = handles->dlr_get(smsc, ts, dst_min);
     if (dlr == NULL)  {
         warning(0, "DLR[%s]: DLR from SMSC<%s> for DST<%s> not found.",
                 dlr_type(), octstr_get_cstr(smsc), octstr_get_cstr(dst));         
@@ -429,12 +446,13 @@ Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ)
     if ((typ & DLR_BUFFERED) && ((dlr->mask & DLR_SUCCESS) || (dlr->mask & DLR_FAIL))) {
         debug("dlr.dlr", 0, "DLR[%s]: DLR not destroyed, still waiting for other delivery report", dlr_type());
         /* update dlr entry status if function defined */
-        if (handles != NULL && handles->dlr_update != NULL)
-            handles->dlr_update(smsc, ts, dst, typ);
+        if (handles != NULL && handles->dlr_update != NULL){
+            handles->dlr_update(smsc, ts, dst_min, typ);
+        }
     } else {
-        if (handles != NULL && handles->dlr_remove != NULL) {
+        if (handles != NULL && handles->dlr_remove != NULL){
             /* it's not good for internal storage, but better for all others */
-            handles->dlr_remove(smsc, ts, dst);
+            handles->dlr_remove(smsc, ts, dst_min);
         } else {
             warning(0, "DLR[%s]: Storage don't have remove operation defined", dlr_type());
         }
@@ -442,6 +460,7 @@ Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ)
 
     /* destroy struct dlr_entry */
     dlr_entry_destroy(dlr);
+    octstr_destroy(dst_min);
 
     return msg;
 }

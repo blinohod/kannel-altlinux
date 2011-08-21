@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -1137,19 +1137,19 @@ static int cgw_handle_op(SMSCConn *conn, Connection *server, struct cgwop *cgwop
                 dlrmsg = dlr_find(conn->id,
                                             ts,     /* timestamp */
                                             msid,   /* destination */
-                                  DLR_SUCCESS);
+                                  DLR_SUCCESS, 0);
                 break;
             case 1:     /* buffered */
                 dlrmsg = dlr_find(conn->id,
                                             ts,     /* timestamp */
                                             msid,   /* destination */
-                                  DLR_BUFFERED);
+                                  DLR_BUFFERED, 0);
                 break;
             case 2:     /* not delivered */
                 dlrmsg = dlr_find(conn->id,
                                             ts,     /* timestamp */
                                             msid,   /* destination */
-                                  DLR_FAIL);
+                                  DLR_FAIL, 0);
                 break;
             }
 

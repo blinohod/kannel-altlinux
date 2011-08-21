@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -144,6 +144,7 @@
 #include "gwlib/gwlib.h"
 #include "gwlib/regex.h"
 #include "smscconn.h"
+#include "load.h"
 
 struct smscconn {
     /* variables set by appropriate SMSCConn driver */
@@ -159,7 +160,9 @@ struct smscconn {
     /* connection specific counters (created in smscconn.c, updated
      *  by callback functions in bb_smscconn.c, NOT used by specific driver) */
     Counter *received;
+    Counter *received_dlr;
     Counter *sent;
+    Counter *sent_dlr;
     Counter *failed;
 
     /* SMSCConn variables set in smscconn.c */
@@ -204,6 +207,11 @@ struct smscconn {
     int reroute_dlr;            /* should DLR's are rereouted too? */
 
     long max_sms_octets; /* max allowed octets for this SMSC */
+
+    Load *outgoing_sms_load;
+    Load *incoming_sms_load;
+    Load *incoming_dlr_load;
+    Load *outgoing_dlr_load;
 
     /* XXX: move rest global data from Smsc here
      */

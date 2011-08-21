@@ -68,7 +68,7 @@
 		<firstname>Alexander</firstname>
 		<surname>Malysh</surname>
 		<affiliation>
-			<jobtitle>Developer</jobtitle>
+			<jobtitle>Senior Software Engineer</jobtitle>
 			<orgname>GTX Ltd.</orgname>
 			<address> 
 				<email>amalysh at kannel.org</email>
@@ -1218,6 +1218,12 @@ admin-password = f00bar
      </entry></row>
     <row><entry><literal>admin-allow-ip</literal></entry></row>
 
+     <row><entry><literal>smsbox-interface (o)</literal></entry>
+     <entry>string</entry>
+     <entry valign="bottom">
+        If this is set, the smsbox listener will only bind
+        to a specified address. For example: "127.0.0.1".
+     </entry></row>
 
     <row><entry><literal>smsbox-port (c)</literal></entry>
      <entry>port-number</entry>
@@ -1327,6 +1333,24 @@ admin-password = f00bar
 		  custom log format is used the standard format will be:
 		  <literal>"%t %l [SMSC:%i] [SVC:%n] [ACT:%A] [BINF:%B] [FID:%F] [META:%D] [from:%p] [to:%P] 
 		           [flags:%m:%c:%M:%C:%d] [msg:%L:%b] [udh:%U:%u]"</literal>
+     </entry></row>
+
+    <row><entry><literal>syslog-level</literal></entry>
+     <entry>number</entry>
+     <entry valign="bottom">
+	 Messages of this log level or higher will also be
+	 sent to syslog, the UNIX system log daemon. If not explicitly
+         set with <literal>syslog-facility</literal>, it logs under the
+         'daemon' category. The default is not to use syslog, and you can
+         set that explicitly by setting <literal>syslog-level</literal>
+	 to 'none'.
+     </entry></row>
+
+    <row><entry><literal>syslog-facility</literal></entry>
+     <entry>string</entry>
+     <entry valign="bottom">
+         The syslog facility to send the syslog entries to. The
+         default is 'daemon'.
      </entry></row>
 
     <row><entry><literal>unified-prefix</literal></entry>
@@ -1473,9 +1497,15 @@ admin-password = f00bar
      <entry valign="bottom">
         Defines the way DLRs are stored. If you have build-in external 
           DLR storage support, i.e. using MySQL you may define here the
-          alternative storage type like 'mysql'. Supported types are:
-          internal, mysql, pgsql, sdb, mssql and oracle. By default this
-          is set to 'internal'.
+          alternative storage type like <literal>mysql</literal>. 
+          Supported types are:
+          <literal>internal</literal>, 
+          <literal>mysql</literal>,
+          <literal>pgsql</literal>,
+          <literal>sdb</literal>,
+          <literal>mssql</literal>,
+          <literal>sqlite3</literal> and <literal>oracle</literal>.
+          By default this is set to <literal>internal</literal>.
      </entry></row>
 
      <row><entry><literal>maximum-queue-length</literal></entry>
@@ -1556,6 +1586,13 @@ admin-password = f00bar
         Default 1800 seconds.
         </entry>   
      </row>
+
+    <row><entry><literal>http-timeout</literal></entry>
+     <entry>seconds</entry>
+     <entry valign="bottom">
+        Sets socket timeout in seconds for outgoing client http
+        connections. Optional. Defaults to 240 seconds.
+     </entry></row>
 
   </tbody>
   </tgroup>
@@ -2098,17 +2135,6 @@ bearerbox-host = localhost
     <row><entry><literal>log-level</literal></entry>
      <entry>number 0..5</entry></row>
 
-    <row><entry><literal>syslog-level</literal></entry>
-     <entry>number</entry>
-     <entry valign="bottom">
-	 Messages of this log level or higher will also be
-	 sent to syslog, the UNIX system log daemon.  The wapbox
-	 logs under the 'daemon' category.
-	 The default is not to use syslog, and you can set that
-	 explicitly by setting <literal>syslog-level</literal>
-	 to 'none'.
-     </entry></row>
-
     <row><entry><literal>access-log</literal></entry>
      <entry>filename</entry>
      <entry valign="bottom">
@@ -2133,7 +2159,25 @@ bearerbox-host = localhost
           anything else will use local time. Default is local time.
      </entry></row>
 
-	 <row><entry><literal>smart-errors</literal></entry>
+    <row><entry><literal>syslog-level</literal></entry>
+     <entry>number</entry>
+     <entry valign="bottom">
+	 Messages of this log level or higher will also be
+	 sent to syslog, the UNIX system log daemon. If not explicitly
+         set with <literal>syslog-facility</literal>, it logs under the
+         'daemon' category. The default is not to use syslog, and you can
+         set that explicitly by setting <literal>syslog-level</literal>
+	 to 'none'.
+     </entry></row>
+
+    <row><entry><literal>syslog-facility</literal></entry>
+     <entry>string</entry>
+     <entry valign="bottom">
+         The syslog facility to send the syslog entries to. The
+         default is 'daemon'.
+     </entry></row>
+
+    <row><entry><literal>smart-errors</literal></entry>
      <entry>bool</entry>
      <entry valign="bottom">
 	 If set wapbox will return a valid WML deck describing the 
@@ -2155,10 +2199,15 @@ bearerbox-host = localhost
 	 is assumed.
 	 </entry></row>
 
+    <row><entry><literal>http-timeout</literal></entry>
+     <entry>seconds</entry>
+     <entry valign="bottom">
+        Sets socket timeout in seconds for outgoing client http
+        connections. Optional. Defaults to 240 seconds.
+     </entry></row>
   </tbody>
   </tgroup>
  </table>
-
 
 <programlisting>
 </programlisting>
@@ -2186,6 +2235,134 @@ bearerbox-host = localhost
 </chapter>
 
 
+<chapter id="wtls">
+<title>Setting up wtls security</title>
+
+	<para>This chapter tells you how to set Kannel up to handle wtls traffic.
+	</para>
+
+	<para><literal>wtls</literal> group is optional and single. The prerequisites for this group
+		are to have defined a wapbox group, and a pair of SSL certificates
+		available. Instructions on how to create self-signed 1024-bit RSA
+		certificates are in <xref linkend="certificates">.
+	</para>
+	<para>Current imlementation provides for the following functionality:</para>
+	<para>
+		<orderedlist numeration="upperalpha">
+			<listitem><para>Supported MACs:</para>
+				<itemizedlist>
+						<listitem><para>SHA_0</para></listitem>
+						<listitem><para>SHA_40</para></listitem>
+						<listitem><para>SHA_80</para></listitem>
+						<listitem><para>SHA_NOLIMIT</para></listitem>
+						<listitem><para>MD5_40</para></listitem>
+						<listitem><para>MD5_80</para></listitem>
+						<listitem><para>MD5_NOLIMIT</para></listitem>
+				</itemizedlist>
+				<para>Missing:</para>
+				<itemizedlist>
+						<listitem><para>SHA_XOR_40</para></listitem>
+				</itemizedlist>
+			</listitem>
+			<listitem><para>Supported Ciphers:</para>
+				<itemizedlist>
+						<listitem><para>RC5_CBC_40</para></listitem>
+						<listitem><para>RC5_CBC_56</para></listitem>
+						<listitem><para>RC5_CBC</para></listitem>
+						<listitem><para>DES_CBC</para></listitem>
+						<listitem><para>DES_CBC_40</para></listitem>
+				</itemizedlist>
+				<para>Missing:</para>
+				<itemizedlist>
+						<listitem><para>NULL_bulk</para></listitem>
+						<listitem><para>TRIPLE_DES_CBC_EDE</para></listitem>
+						<listitem><para>IDEA_CBC_40</para></listitem>
+						<listitem><para>IDEA_CBC_56</para></listitem>
+						<listitem><para>IDEA_CBC</para></listitem>
+				</itemizedlist>
+			</listitem>
+			<listitem><para>Supported Keys:</para>
+				<itemizedlist>
+						<listitem><para>RSA_anon</para></listitem>
+				</itemizedlist>
+				<para>Missing:</para>
+				<itemizedlist>
+						<listitem><para>RSA_anon_512</para></listitem>
+						<listitem><para>RSA_anon_768</para></listitem>
+						<listitem><para>RSA_NOLIMIT</para></listitem>
+						<listitem><para>RSA_512</para></listitem>
+						<listitem><para>RSA_768</para></listitem>
+						<listitem><para>ECDH_anon</para></listitem>
+						<listitem><para>ECDH_anon_113</para></listitem>
+						<listitem><para>ECDH_anon_131</para></listitem>
+						<listitem><para>ECDH_ECDSA_NOLIMIT</para></listitem>
+				</itemizedlist>
+				<para>Keys might seem a shortcoming, but all mobiles support
+					RSA_anon. Some of the other RSA_anon keys (i.e. RSA_anon_512,
+					RSA_anon_768) are propably supported as well, just haven't been
+					tested yet.</para>
+			</listitem>
+			<listitem><para>All wtls states except:</para>
+				<itemizedlist>
+						<listitem><para>Suspend/Resume wtls session</para></listitem>
+						<listitem><para>Cipher change when already connected. In practice
+							this is handled through another client hello, while
+							already connected to the same client</para></listitem>
+				</itemizedlist>
+			</listitem>
+	</orderedlist></para>
+
+	<para>The simplest working <literal>wtls</literal> group looks like this:
+<programlisting>
+group = wtls
+certificate-file = /etc/kannel/server.crt
+privatekey-file = /etc/kannel/server.key
+</programlisting>
+
+	Can also be the same single combined pem file with both certificate and
+	privatekey parts. The complete variable list for the <literal>wtls</literal> group is:</para>
+
+<sect1>
+<title>Wtls configuration</title>
+ <table frame="none">
+  <title>Wtls Group Variables</title>
+  <tgroup cols="3">
+  <thead>
+   <row>
+     <entry>Variable</entry>
+     <entry>Value</entry>
+     <entry>Description</entry>
+   </row>
+  </thead>
+  <tbody>
+   <row><entry><literal>group (m)</literal></entry>
+     <entry><literal>wtls</literal></entry>
+     <entry valign="bottom">
+       This is mandatory variable
+     </entry></row>
+
+   <row><entry><literal>certificate-file (m)</literal></entry>
+     <entry><literal>filename</literal></entry>
+     <entry valign="bottom">
+       Public key SSL certificate.
+     </entry></row>
+
+   <row><entry><literal>privatekey-file (m)</literal></entry>
+     <entry><literal>filename</literal></entry>
+     <entry valign="bottom">
+       Private key SSL certificate.
+     </entry></row>
+
+   <row><entry><literal>privatekey-password (o)</literal></entry>
+     <entry><literal>Phrase</literal></entry>
+     <entry valign="bottom">
+       Optional. Needed only if private key was created with a passphrase.
+     </entry></row>
+   </tbody>
+  </tgroup>
+ </table>
+</sect1>
+</chapter>
 
 <chapter id="msisdn-provisioning">
 <title>Setting up MSISDN provisioning for WAP gateway</title>
@@ -3147,6 +3324,14 @@ address-range = ""
         Defines whether we should try to bind with SSL enabled connection.
      </entry></row>
 
+    <row><entry><literal>ssl-client-certkey-file (c)</literal></entry>
+     <entry>filename</entry>
+     <entry valign="bottom">
+      A PEM encoded SSL certificate and private key file to be used
+      for SSL connections. This option is used together with use-ssl
+      for client certificate validation with SMPP SMSCs requiring it.
+     </entry></row>
+
    <row><entry><literal>transceiver-mode</literal></entry>
      <entry>bool</entry>
      <entry valign="bottom">
@@ -3927,6 +4112,16 @@ pin = 2345
                 storage will be used (usually "SM").
      </entry></row>
 
+   <row><entry><literal>message-start</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+        Optional integer, defaults to 1. Specifies starting index in
+                SIM buffer for new SMS. Most modems start numbering from 1,
+                however a few like the UMG181 start numbering from 0. This
+                parameter ensures that all SMS are fetched when using
+                "SIM buffering".
+     </entry></row>
+
    <row><entry><literal>enable-mms</literal></entry>
      <entry><literal>boolean</literal></entry>
      <entry valign="bottom">
@@ -3963,7 +4158,71 @@ pin = 2345
    It is recommended to use <literal>keepalive</literal> variable, in order to 
    automatically reconnect in case of network connectivity problems.</para>
 
+   <sect3>
+     <title>Modem initialization</title>
+     <para>This question has been asked frequently in the users mailing list. 
+     It usually comes in two forms:
 
+     <orderedlist>
+        <listitem><para>Modem doesn't receive or transmit SMS.</para>
+           <para>In its current implementation, the at driver will panic if it
+                 cannot find the modem device and bearerbox won't start. This
+                 can happen either because the wrong modem device is configured
+                 or the device has no write access for kannel's user.</para>
+           <para> In the first case use system logs to discover where is your
+                  modem assigned to:</para>
+           <para>grep tty /var/log/messages</para>
+           <para>Then verify that this is indeed your GSM modem device by
+                 connecting to it with minicom or wvdial and issuing a few AT
+                 commands. Wvdial is preferrable, since it can also give you a
+                 working <literal>init-string</literal></para>
+           <para>In the second case you need to give write access to kannel
+                 user. This is no problem if you run kannel as root, but it is
+                 not recommended to do so. In Ubuntu linux you just need to
+                 assign kannel user to group "dial". In other systems you can
+                 either:</para>
+           <programlisting>chmod 666 /dev/modem</programlisting>
+           <para>or preferably:</para>
+           <programlisting>
+chmod 664 /dev/modem
+chgrp <emphasis>group</emphasis> /dev/modem
+usermod -G <emphasis>group</emphasis> <emphasis>kannel-user</emphasis>
+           </programlisting>
+        </listitem>
+        <listitem><para>Modem doesn't receive DLRs or SMS.</para>
+           <para>By default the modem doesn't know how to treat incoming
+                 messages. To tell it to send it to kannel you have to
+                 configure <literal>init-string</literal> with the <emphasis>
+                 +CNMI=x,x,x,x,x</emphasis> command. X's are decimal numbers
+                 and CNMI stands for Command New Message Indication. There is
+                 no hard rule about its values. They are model and manufacturer
+                 specific. Best to consult modem manual or manufacturer's web
+                 site. Failing that, wvdialconf might give a working CNMI.
+                 Finally see modems.conf for examples and try out different
+                 values. Some Nokia phones do not support this command, but
+                 are ready to transmit incoming messages from the start.</para>
+           <para>Since this setting is modem specific, kannel cannot understand
+                 what it means from its value, and if using unconventional
+                 values you should tell kannel through <literal>sim-buffering
+                 </literal> and <literal> message-storage</literal>. In any
+                 case it is useful to add +CMEE = 1 or 2 in the <literal>
+                 init-string</literal> in order to make the modem more verbose
+                 in its responses.</para>
+           <programlisting>
+group = modems
+init-string = "AT+CNMI=2,3,0,1,0;+CMEE=1"
+message-storage = ME or SM    Depending on your modem, you may need to adjust it
+...
+
+group = smsc
+smsc = at
+sim-buffering = true          This will tell kannel to search for messages in
+...                           the modem (either memory or its SIM)
+           </programlisting>
+        </listitem>
+     </orderedlist>
+     </para>
+   </sect3>
 </sect2>
 
 
@@ -4103,6 +4362,14 @@ send-url = "http://localhost:20022"
      <entry valign="bottom">
        Password for username, if needed.
      </entry></row>
+
+   <row><entry><literal>max-pending-submits</literal></entry>
+     <entry><literal>number</literal></entry>
+     <entry valign="bottom">
+       Optional the maximum number of outstanding (i.e. acknowledged)
+       requests. As a guideline it is recommended that no more than
+       10 (default) requests are outstanding at any time.
+    </entry></row>
    </tbody></tgroup></informaltable>
 
 <sect3>
@@ -4286,6 +4553,13 @@ send-url = "http://localhost:20022"
      <entry><literal>string</literal></entry>
      <entry valign="bottom">
        Overrides the default parameter for the 'foreign-id' field
+       used on incoming requests.
+     </entry></row>
+     
+   <row><entry><literal>generic-param-meta-data (o)</literal></entry>
+     <entry><literal>string</literal></entry>
+     <entry valign="bottom">
+       Overrides the default parameter for the 'meta-data' field
        used on incoming requests.
      </entry></row>
 
@@ -5340,6 +5614,43 @@ field-boxc-id = boxc
 
     </sect2>
 
+	<sect2>
+	<title>SQLite3 DLR storage</title>
+	<para>To store DLR information into a SQLite3 database you may use the
+	<literal>dlr-storage = sqlite3</literal> configuration directive in the
+	<literal>core</literal> group.
+	</para>
+	<para>In addition to that you must have a <literal>dlr-db</literal>
+	group defined that specifies the table field names that are used to the
+	DLR attributes and a <literal>sqlite3-connection</literal> group that
+	defines the connection to the SQLite3 database itself.
+	</para>
+	<para>Here is the example configuration:
+
+<programlisting>
+group = sqlite3-connection
+id = mydlr
+database = /path/to/file
+max-connections = 1
+
+group = dlr-db
+id = mydlr
+table = dlr
+field-smsc = smsc
+field-timestamp = ts
+field-destination = destination
+field-source = source
+field-service = service
+field-url = url
+field-mask = mask
+field-status = status
+field-boxc-id = boxc
+</programlisting>
+
+	</para>
+
+	</sect2>
+
         <sect2>
 	<title>DLR database field configuration</title>
 	<para>For external database storage of DLR information in relational
@@ -5557,6 +5868,13 @@ ssl-certkey-file
 		  specific smsbox instance, i.e. SMPP or EMI proxying boxes.
      </entry></row>
 
+     <row><entry><literal>sendsms-interface (o)</literal></entry>
+     <entry>string</entry>
+     <entry valign="bottom">
+        If this is set, the sendsms HTTP interface will only bind
+        to a specified address. For example: "127.0.0.1".
+     </entry></row>
+
     <row><entry><literal>sendsms-port (c)</literal></entry>
      <entry>port-number</entry>
      <entry valign="bottom">
@@ -5632,6 +5950,24 @@ ssl-certkey-file
 
     <row><entry><literal>access-log</literal></entry>
      <entry>filename</entry></row>
+
+    <row><entry><literal>syslog-level</literal></entry>
+     <entry>number</entry>
+     <entry valign="bottom">
+	 Messages of this log level or higher will also be
+	 sent to syslog, the UNIX system log daemon. If not explicitly
+         set with <literal>syslog-facility</literal>, it logs under the
+         'daemon' category. The default is not to use syslog, and you can
+         set that explicitly by setting <literal>syslog-level</literal>
+	 to 'none'.
+     </entry></row>
+
+    <row><entry><literal>syslog-facility</literal></entry>
+     <entry>string</entry>
+     <entry valign="bottom">
+         The syslog facility to send the syslog entries to. The
+         default is 'daemon'.
+     </entry></row>
 
     <row><entry><literal>white-list</literal></entry>
      <entry>URL</entry>
@@ -5733,6 +6069,21 @@ ssl-certkey-file
         (Default: 512)
         </entry>
      </row>
+
+    <row><entry><literal>http-timeout</literal></entry>
+     <entry>seconds</entry>
+     <entry valign="bottom">
+        Sets socket timeout in seconds for outgoing client http
+        connections. Optional. Defaults to 240 seconds.
+     </entry></row>
+
+     <row><entry><literal>sms-length</literal></entry>
+        <entry>number</entry>
+        <entry valign="bottom">
+        Maximum allowed number of characters for a single SMS in smsbox.
+        If this maximum exceeds Kannel will split SMS into multiparts.
+        Default: 140
+     </entry></row>
 
   </tbody>
   </tgroup>
@@ -5940,17 +6291,16 @@ get-url = "http://%S"
          number of `%s' fields in the URL. This allows you to
         configure the gateway to use different URLs for the same
         keyword depending on the number of words the SMS message
-        contains. The keyword matches in non-case sensitive manner,
-		  which means you don't have to use aliases to handle different
-		  cased versions of your keyword.
+        contains. The keyword is case insensitive, which means you don't
+        have to use aliases to handle different cased versions of your keyword.
      </entry></row>
 
    <row><entry><literal>keyword-regex</literal></entry>
      <entry>POSIX regular expression</entry>
      <entry valign="bottom">
      This field may be used to enable service-selection based on a regular expression.
-     If this field is defined for a service, then the selection will rely on the regex only, never taking
-     the literal <literal>keyword</literal> into account.
+     You can define either keyword or keyword-regex in configuration, but not both in
+     the same sms-service. keyword-regex is case sensitive.
      See section on <xref linkend="regular-expressions"> for details.
    </entry></row>
 
@@ -5958,7 +6308,8 @@ get-url = "http://%S"
      <entry>word-list</entry>
      <entry valign="bottom">
         If the service has aliases, they are listed as a list with 
-        each entry separated with a semicolon (';')
+        each entry separated with a semicolon (';'). Aliases are case
+        insensitive just like keyword.
 
      </entry></row>
 
@@ -6397,6 +6748,10 @@ the SMS ID of the internal message structure
 
 <row><entry><literal>%d</literal></entry><entry>
 the delivery report value
+</entry></row>
+
+<row><entry><literal>%R</literal></entry><entry>
+the delivery report URL value
 </entry></row>
 
 <row><entry><literal>%D</literal></entry><entry>
@@ -7489,7 +7844,7 @@ the Kannel configuration, or 'Authorization failed' is returned.
    <entry><literal>string</literal></entry>
    <entry valign="bottom">
         Charset of text message. Used to convert to a format suitable for
-	7 bits or to UCS-2. Defaults to WINDOWS-1252 if coding is 7bits and
+	7 bits or to UCS-2. Defaults to UTF-8 if coding is 7 bits and
 	UTF-16BE if coding is UCS-2.
    </entry></row>
 
@@ -8732,6 +9087,60 @@ ssl-server-key-file = "/etc/kannel/key1.pem"
 
 </appendix>
 
+<appendix id="certificates">
+<title>Certificate generation</title>
+
+	<para>This appendix includes pertinent information about required SSL
+		certificate genaration, where needed.
+	</para>
+
+<sect1>
+	<title>Self-signed 1024-bit RSA SSL certificates using openssl</title>
+	<para>
+		<orderedlist numeration="arabic">
+			<listitem><para>Generate private key:</para>
+				<para><literal>openssl genrsa -des3 -out server.key 1024</literal></para>
+				<para>You will be asked for a passphrase.</para></listitem>
+
+			<listitem><para>Generate a certificate request:</para>
+				<para><literal>
+					openssl req -new -key server.key -out server.csr
+				</literal></para>
+				<para>Several questions follow. At the end you may send server.csr
+					to a certificate authority, which in turn will sign it and
+					generate the certificate for you, or you can sign it yourself.
+			</para></listitem>
+
+			<listitem><para>Remove passphrase from key:</para>
+				<para><literal>cp server.key server.key.org</literal>
+				</para>
+				<para><literal>openssl rsa -in server.key.org -out server.key
+				</literal></para>
+				<para><literal>rm server.key.org</literal></para>
+			</listitem>
+
+			<listitem><para>Self-sign the certificate:</para>
+				<para>If you chose not to send the request to a Certificate
+					Authority, you will need to sign it yourself. This one is good
+					for 1 year:</para>
+				<para><literal>openssl x509 -req -days 365 -in server.csr -signkey
+					server.key -out server.crt</literal></para>
+		</listitem>
+
+			<listitem><para>Move keys to desired location:</para>
+				<para><literal>mv server.crt /etc/kannel/public/server.crt</literal>
+				</para>
+				<para><literal>mv server.key /etc/kannel/private/server.key
+				</literal></para>
+				<para><literal>mv server.csr /etc/ianwap/private/ianwap.csr (key
+					request)</literal></para>
+			</listitem>
+		</orderedlist>
+	</para>
+	<para>Update configuration accordingly</para>
+</sect1>
+
+</appendix>
 <appendix>
 <title>Using the fake WAP sender</title>
 

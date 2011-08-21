@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -143,7 +143,6 @@ static const unsigned char gsm_to_latin1[128] = {
          'p',  'q',  'r',  's',  't',  'u',  'v',  'w',   /* 112 - 119 */
          'x',  'y',  'z', 0xe4, 0xf6, 0xf1, 0xfc, 0xe0    /* 120 - 127 */
 };
-
 
 /** 
  * Map GSM default alphabet characters to unicode codeposition.

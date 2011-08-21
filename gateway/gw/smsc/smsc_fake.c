@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -291,7 +291,7 @@ static void main_connection_loop(SMSCConn *conn, Connection *client)
                     dlrmsg = dlr_find(conn->id,
                                       tmp, /* smsc message id */
                                       copy->sms.receiver, /* destination */
-                                      dlrstat);
+                                      dlrstat, 0);
                     if (dlrmsg != NULL) {
                         /* XXX TODO: Provide a SMPP DLR text in msgdata */
                         bb_smscconn_receive(conn, dlrmsg);

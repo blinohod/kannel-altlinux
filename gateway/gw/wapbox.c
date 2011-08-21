@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -116,8 +116,9 @@ int concatenation = 1;
 long max_messages = 10;
 
 #ifdef HAVE_WTLS_OPENSSL
-RSA* private_key = NULL;
-X509* x509_cert = NULL;
+extern RSA* private_key;
+extern X509* x509_cert;
+extern void wtls_secmgr_init();
 #endif
 
 static Cfg *init_wapbox(Cfg *cfg)
@@ -126,6 +127,7 @@ static Cfg *init_wapbox(Cfg *cfg)
     Octstr *s;
     Octstr *logfile;
     int lf, m;
+    long value;
 
     lf = m = 1;
 
@@ -170,11 +172,15 @@ static Cfg *init_wapbox(Cfg *cfg)
 
     if ((s = cfg_get(grp, octstr_imm("syslog-level"))) != NULL) {
         long level;
-	
+        Octstr *facility;
+        if ((facility = cfg_get(grp, octstr_imm("syslog-facility"))) != NULL) {
+            log_set_syslog_facility(octstr_get_cstr(facility));
+            octstr_destroy(facility);
+        }
         if (octstr_compare(s, octstr_imm("none")) == 0) {
             log_set_syslog(NULL, 0);
             debug("wap", 0, "syslog parameter is none");
-        } else if (octstr_parse_long(&level, s, 0, 0) == -1) {
+        } else if (octstr_parse_long(&level, s, 0, 10) > 0) {
             log_set_syslog("wapbox", level);
             debug("wap", 0, "syslog parameter is %ld", level);
         }
@@ -200,6 +206,9 @@ static Cfg *init_wapbox(Cfg *cfg)
         octstr_destroy(s);
     }
 
+    if (cfg_get_integer(&value, grp, octstr_imm("http-timeout")) == 0)
+       http_set_client_timeout(value);
+
     /* configure the 'wtls' group */
 #if (HAVE_WTLS_OPENSSL)
     /* Load up the necessary keys */
@@ -213,7 +222,8 @@ static Cfg *init_wapbox(Cfg *cfg)
                 /* Load the certificate into the necessary parameter */
                 get_cert_from_file(s, &x509_cert);
                 gw_assert(x509_cert != NULL);
-                debug("bbox", 0, "certificate parameter is %s", s);
+                debug("bbox", 0, "certificate parameter is %s",
+                   octstr_get_cstr(s));
             }
             octstr_destroy(s);
         } else
@@ -228,7 +238,8 @@ static Cfg *init_wapbox(Cfg *cfg)
                 /* Load the private key into the necessary parameter */
                 get_privkey_from_file(s, &private_key, password);
                 gw_assert(private_key != NULL);
-                debug("bbox", 0, "certificate parameter is %s", s);
+                debug("bbox", 0, "certificate parameter is %s",
+                   octstr_get_cstr(s));
             }
             if (password != NULL)
                 octstr_destroy(password);
@@ -438,8 +449,15 @@ static void dispatch_datagram(WAPEvent *dgram)
         wap_event_dump(dgram);
     } 
     else if (dgram->u.T_DUnitdata_Req.address_type == ADDR_IPV4) {
+#ifdef HAVE_WTLS_OPENSSL
+      if (dgram->u.T_DUnitdata_Req.addr_tuple->local->port >= WTLS_CONNECTIONLESS_PORT)
+         wtls_dispatch_resp(dgram);
+      else
+#endif /* HAVE_WTLS_OPENSSL */
+      {
 	   msg = pack_ip_datagram(dgram);
        write_to_bearerbox(msg);
+      }
     } else {
         msg_sequence = counter_increase(sequence_counter) & 0xff;
         msg = pack_sms_datagram(dgram);
@@ -454,8 +472,8 @@ static void dispatch_datagram(WAPEvent *dgram)
         gwlist_destroy(sms_datagrams, NULL);
         msg_destroy(msg);
     }
-
     wap_event_destroy(dgram);
+
 }
 
 
@@ -725,7 +743,7 @@ int main(int argc, char **argv)
 
 #if (HAVE_WTLS_OPENSSL)
     wtls_secmgr_init();
-    wtls_init();
+    wtls_init(&write_to_bearerbox);
 #endif
     
     if (cfg) {

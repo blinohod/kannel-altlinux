@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -2116,7 +2116,7 @@ int select_bearer_network(WAPEvent **e)
         network = (**e).u.Push_Message.network;
     
     for (i = 0; i < NUMBER_OF_NETWORKS ; ++i) {
-        if (octstr_case_compare(bearer, octstr_imm(bearers[i])) == 0)
+        if (octstr_case_compare(network, octstr_imm(networks[i])) == 0)
 	        break;
     }
     for (j = 0; j < NUMBER_OF_BEARERS ; ++j) {
@@ -3318,10 +3318,6 @@ static long set_dlr_mask(List *headers, Octstr *dlr_url)
     Octstr *dlrmaskos;
     long dlr_mask;
     long masklen;    
-
-    if (dlr_url == NULL) {
-        return 0; 
-    }
 
     dlrmaskos = http_header_value(headers, octstr_imm("X-Kannel-DLR-Mask"));
     if (dlrmaskos == NULL) { 

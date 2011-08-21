@@ -1,7 +1,7 @@
 /* ====================================================================
  * The Kannel Software License, Version 1.0
  *
- * Copyright (c) 2001-2009 Kannel Group
+ * Copyright (c) 2001-2010 Kannel Group
  * Copyright (c) 1998-2001 WapIT Ltd.
  * All rights reserved.
  *
@@ -114,6 +114,7 @@ static Dict *smsbox_by_smsc_receiver;
 
 static long	smsbox_port;
 static int smsbox_port_ssl;
+static Octstr *smsbox_interface;
 static long	wapbox_port;
 static int wapbox_port_ssl;
 
@@ -226,27 +227,46 @@ static void deliver_sms_to_queue(Msg *msg, Boxc *conn)
     store_save(msg);
 
     rc = smsc2_rout(msg, 0);
-    switch(rc) {
+    switch (rc) {
+        
         case SMSCCONN_SUCCESS:
-           mack->ack.nack = ack_success;
-           break;
+            mack->ack.nack = ack_success;
+            break;
+        
         case SMSCCONN_QUEUED:
-           mack->ack.nack = ack_buffered;
-           break;
+            mack->ack.nack = ack_buffered;
+            break;
+        
         case SMSCCONN_FAILED_DISCARDED: /* no router at all */
+            warning(0, "Message rejected by bearerbox, no router!");
+            
+            /* 
+             * we don't store_save_ack() here, since the call to
+             * bb_smscconn_send_failed() within smsc2_route() did 
+             * it already. 
+             */
+            mack->ack.nack = ack_failed;
+
+            /* destroy original message */
+            msg_destroy(msg);
+            break;
+        
         case SMSCCONN_FAILED_QFULL: /* queue full */
-           warning(0, "Message rejected by bearerbox, %s!",
+            warning(0, "Message rejected by bearerbox, %s!",
                              (rc == SMSCCONN_FAILED_DISCARDED) ? "no router" : "queue full");
            /*
             * first create nack for store-file, in order to delete
             * message from store-file.
             */
-           store_save_ack(msg, (rc == SMSCCONN_FAILED_QFULL ? ack_failed_tmp : ack_failed));
-           mack->ack.nack = (rc == SMSCCONN_FAILED_QFULL ? ack_failed_tmp : ack_failed);
+            mack->ack.nack = ack_failed_tmp;
+            store_save_ack(msg, ack_failed_tmp);
 
-           /* destroy original message */
-           msg_destroy(msg);
-           break;
+            /* destroy original message */
+            msg_destroy(msg);
+            break;
+            
+        default:
+            break;
     }
 
     /* put ack into incoming queue of conn */
@@ -974,17 +994,15 @@ static void wait_for_connections(int fd, void (*function) (void *arg),
 static void smsboxc_run(void *arg)
 {
     int fd;
-    int port;
 
     gwlist_add_producer(flow_threads);
     gwthread_wakeup(MAIN_THREAD_ID);
-    port = (int) *((long *)arg);
 
-    fd = make_server_socket(port, NULL);
+    fd = make_server_socket(smsbox_port, smsbox_interface ? octstr_get_cstr(smsbox_interface) : NULL);
     /* XXX add interface_name if required */
 
     if (fd < 0) {
-        panic(0, "Could not open smsbox port %d", port);
+        panic(0, "Could not open smsbox port %ld", smsbox_port);
     }
 
     /*
@@ -1203,10 +1221,21 @@ int smsbox_start(Cfg *cfg)
     if (smsbox_port_ssl)
         debug("bb", 0, "smsbox connection module is SSL-enabled");
 
+    smsbox_interface = cfg_get(grp, octstr_imm("smsbox-interface"));
+
     if (cfg_get_integer(&smsbox_max_pending, grp, octstr_imm("smsbox-max-pending")) == -1) {
         smsbox_max_pending = SMSBOX_MAX_PENDING;
         info(0, "BOXC: 'smsbox-max-pending' not set, using default (%ld).", smsbox_max_pending);
     }
+
+    box_allow_ip = cfg_get(grp, octstr_imm("box-allow-ip"));
+    if (box_allow_ip == NULL)
+        box_allow_ip = octstr_create("");
+    box_deny_ip = cfg_get(grp, octstr_imm("box-deny-ip"));
+    if (box_deny_ip == NULL)
+        box_deny_ip = octstr_create("");
+    if (box_allow_ip != NULL && box_deny_ip == NULL)
+        info(0, "Box connection allowed IPs defined without any denied...");
 
     smsbox_list = gwlist_create();	/* have a list of connections */
     smsbox_list_rwlock = gw_rwlock_create();
@@ -1230,7 +1259,7 @@ int smsbox_start(Cfg *cfg)
     if ((sms_dequeue_thread = gwthread_create(sms_to_smsboxes, NULL)) == -1)
  	    panic(0, "Failed to start a new thread for smsbox routing");
 
-    if (gwthread_create(smsboxc_run, &smsbox_port) == -1)
+    if (gwthread_create(smsboxc_run, NULL) == -1)
 	    panic(0, "Failed to start a new thread for smsbox connections");
 
     return 0;
@@ -1442,6 +1471,8 @@ void boxc_cleanup(void)
     box_deny_ip = NULL;
     counter_destroy(boxid);
     boxid = NULL;
+    octstr_destroy(smsbox_interface);
+    smsbox_interface = NULL;
 }
 
 

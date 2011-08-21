@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -114,7 +114,9 @@ typedef struct smsc_state {
     smscconn_killed_t killed;	/* if we are killed, why */
     int is_stopped;	/* is connection currently in stopped state? */
     unsigned long received;	/* total number */
+    unsigned long received_dlr; /* total number */
     unsigned long sent;		/* total number */
+    unsigned long sent_dlr;     /* total number */
     unsigned long failed;	/* total number */
     long queued;	/* set our internal outgoing queue length */
     long online;	/* in seconds */

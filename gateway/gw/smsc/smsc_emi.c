@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -851,19 +851,19 @@ static int handle_operation(SMSCConn *conn, Connection *server,
 		msg = dlr_find((conn->id ? conn->id : privdata->name),
 			emimsg->fields[E50_SCTS], /* timestamp */
 			emimsg->fields[E50_OADC], /* destination */
-			DLR_SUCCESS);
+			DLR_SUCCESS, 1);
 		break;
 	case 1: /* buffered */
 		msg = dlr_find((conn->id ? conn->id : privdata->name),
 			emimsg->fields[E50_SCTS], /* timestamp */
 			emimsg->fields[E50_OADC], /* destination */
-			DLR_BUFFERED);
+			DLR_BUFFERED, 1);
 		break;
 	case 2: /* not delivered */
 		msg = dlr_find((conn->id ? conn->id : privdata->name),
 			emimsg->fields[E50_SCTS], /* timestamp */
 			emimsg->fields[E50_OADC], /* destination */
-			DLR_FAIL);
+			DLR_FAIL, 1);
 		break;
 	}
 	if (msg != NULL) {     
@@ -1814,7 +1814,7 @@ int smsc_emi2_create(SMSCConn *conn, CfgGroup *cfg)
 
 error:
     error(0, "EMI2[%s]: Failed to create emi2 smsc connection",
-	  octstr_get_cstr(privdata->name));
+            (privdata ? octstr_get_cstr(privdata->name) : "-"));
     if (privdata != NULL) {
 	gw_prioqueue_destroy(privdata->outgoing_queue, NULL);
     }
@@ -1824,6 +1824,6 @@ error:
     octstr_destroy(host);
     conn->why_killed = SMSCCONN_KILLED_CANNOT_CONNECT;
     conn->status = SMSCCONN_DEAD;
-    info(0, "EMI2[%s]: exiting", octstr_get_cstr(privdata->name));
+    info(0, "EMI2[%s]: exiting", (privdata ? octstr_get_cstr(privdata->name) : "-"));
     return -1;
 }

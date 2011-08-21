@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -89,6 +89,8 @@ List *outgoing_wdp;
 
 Counter *incoming_sms_counter;
 Counter *outgoing_sms_counter;
+Counter *incoming_dlr_counter;
+Counter *outgoing_dlr_counter;
 Counter *incoming_wdp_counter;
 Counter *outgoing_wdp_counter;
 
@@ -99,6 +101,8 @@ long max_outgoing_sms_qlength;
 
 Load *outgoing_sms_load;
 Load *incoming_sms_load;
+Load *incoming_dlr_load;
+Load *outgoing_dlr_load;
 
 
 /* this is not a list of items; instead it is used as
@@ -229,9 +233,15 @@ static int start_smsc(Cfg *cfg)
     if (started) 
         return 0;
 
-    smsbox_start(cfg);
+    if (smsbox_start(cfg) == -1) {
+        error(0, "Unable to start smsbox module.");
+        return -1;
+    }
 
-    smsc2_start(cfg);
+    if (smsc2_start(cfg) == -1) {
+        error(0, "Unable to start smsc module.");
+        return -1;
+    }
 
     started = 1;
     return 0;
@@ -360,13 +370,20 @@ static Cfg *init_bearerbox(Cfg *cfg)
 {
     CfgGroup *grp;
     Octstr *log, *val;
-    long loglevel, store_dump_freq;
+    long loglevel, store_dump_freq, value;
     int lf, m;
 #ifdef HAVE_LIBSSL
     Octstr *ssl_server_cert_file;
     Octstr *ssl_server_key_file;
     int ssl_enabled = 0;
 #endif /* HAVE_LIBSSL */
+    Octstr *http_proxy_host = NULL;
+    long http_proxy_port = -1;
+    int http_proxy_ssl = 0;
+    List *http_proxy_exceptions = NULL;
+    Octstr *http_proxy_username = NULL;
+    Octstr *http_proxy_password = NULL;
+    Octstr *http_proxy_exceptions_regex = NULL;
 
     /* defaults: use localtime and markers for access-log */
     lf = m = 1;
@@ -379,6 +396,22 @@ static Cfg *init_bearerbox(Cfg *cfg)
             loglevel = 0;
         log_open(octstr_get_cstr(log), loglevel, GW_NON_EXCL);
         octstr_destroy(log);
+    }
+    if ((val = cfg_get(grp, octstr_imm("syslog-level"))) != NULL) {
+        long level;
+        Octstr *facility;
+        if ((facility = cfg_get(grp, octstr_imm("syslog-facility"))) != NULL) {
+            log_set_syslog_facility(octstr_get_cstr(facility));
+            octstr_destroy(facility);
+        }
+        if (octstr_compare(val, octstr_imm("none")) == 0) {
+            log_set_syslog(NULL, 0);
+        } else if (octstr_parse_long(&level, val, 0, 10) > 0) {
+            log_set_syslog("bearerbox", level);
+        }
+        octstr_destroy(val);
+    } else {
+        log_set_syslog(NULL, 0);
     }
 
     if (check_config(cfg) == -1)
@@ -423,6 +456,22 @@ static Cfg *init_bearerbox(Cfg *cfg)
     octstr_destroy(val);
     octstr_destroy(log);
 
+    cfg_get_integer(&http_proxy_port, grp, octstr_imm("http-proxy-port"));
+#ifdef HAVE_LIBSSL
+    cfg_get_bool(&http_proxy_ssl, grp, octstr_imm("http-proxy-ssl"));
+#endif /* HAVE_LIBSSL */
+
+    http_proxy_host = cfg_get(grp, 
+    	    	    	octstr_imm("http-proxy-host"));
+    http_proxy_username = cfg_get(grp, 
+    	    	    	    octstr_imm("http-proxy-username"));
+    http_proxy_password = cfg_get(grp, 
+    	    	    	    octstr_imm("http-proxy-password"));
+    http_proxy_exceptions = cfg_get_list(grp,
+    	    	    	    octstr_imm("http-proxy-exceptions"));
+    http_proxy_exceptions_regex = cfg_get(grp,
+    	    	    	    octstr_imm("http-proxy-exceptions-regex"));
+
     conn_config_ssl (grp);
 
     /*
@@ -457,6 +506,8 @@ static Cfg *init_bearerbox(Cfg *cfg)
 
     outgoing_sms_counter = counter_create();
     incoming_sms_counter = counter_create();
+    incoming_dlr_counter = counter_create();
+    outgoing_dlr_counter = counter_create();
     outgoing_wdp_counter = counter_create();
     incoming_wdp_counter = counter_create();
 
@@ -472,6 +523,16 @@ static Cfg *init_bearerbox(Cfg *cfg)
     load_add_interval(incoming_sms_load, 60);
     load_add_interval(incoming_sms_load, 300);
     load_add_interval(incoming_sms_load, -1);
+    incoming_dlr_load = load_create();
+    /* add 60,300,-1 entries to dlr */
+    load_add_interval(incoming_dlr_load, 60);
+    load_add_interval(incoming_dlr_load, 300);
+    load_add_interval(incoming_dlr_load, -1);
+    outgoing_dlr_load = load_create();
+    /* add 60,300,-1 entries to dlr */
+    load_add_interval(outgoing_dlr_load, 60);
+    load_add_interval(outgoing_dlr_load, 300);
+    load_add_interval(outgoing_dlr_load, -1);
 
     setup_signal_handlers();
     
@@ -498,14 +559,19 @@ static Cfg *init_bearerbox(Cfg *cfg)
     if (max_outgoing_sms_qlength < 0)
         max_outgoing_sms_qlength = DEFAULT_OUTGOING_SMS_QLENGTH;
 
+    if (cfg_get_integer(&value, grp, octstr_imm("http-timeout")) == 0)
+        http_set_client_timeout(value);
 #ifndef NO_SMS    
     {
         List *list;
 	
         list = cfg_get_multi_group(cfg, octstr_imm("smsc"));
         if (list != NULL) {
-            start_smsc(cfg);
-            gwlist_destroy(list, NULL);
+           gwlist_destroy(list, NULL); 
+           if (start_smsc(cfg) == -1) {
+               panic(0, "Unable to start SMSCs.");
+               return NULL;
+           }
         }
     }
 #endif
@@ -520,7 +586,19 @@ static Cfg *init_bearerbox(Cfg *cfg)
     if (cfg_get_single_group(cfg, octstr_imm("wapbox")) != NULL)
         start_wap(cfg);
 #endif
-    
+
+    if (http_proxy_host != NULL && http_proxy_port > 0) {
+    	http_use_proxy(http_proxy_host, http_proxy_port, http_proxy_ssl,
+		       http_proxy_exceptions, http_proxy_username,
+                       http_proxy_password, http_proxy_exceptions_regex);
+    }
+
+    octstr_destroy(http_proxy_host);
+    octstr_destroy(http_proxy_username);
+    octstr_destroy(http_proxy_password);
+    octstr_destroy(http_proxy_exceptions_regex);
+    gwlist_destroy(http_proxy_exceptions, octstr_destroy_item);
+
     return cfg;
 }
 
@@ -556,19 +634,25 @@ static void empty_msg_lists(void)
         debug("bb", 0, "Remaining SMS: %ld incoming, %ld outgoing",
               gwlist_len(incoming_sms), gwlist_len(outgoing_sms));
 
-    info(0, "Total SMS messages: received %ld, sent %ld",
+    info(0, "Total SMS messages: received %ld, dlr %ld, sent %ld, dlr %ld",
          counter_value(incoming_sms_counter),
-         counter_value(outgoing_sms_counter));
+         counter_value(incoming_dlr_counter),
+         counter_value(outgoing_sms_counter),
+         counter_value(outgoing_dlr_counter));
 #endif
 
     gwlist_destroy(incoming_sms, msg_destroy_item);
     gwlist_destroy(outgoing_sms, msg_destroy_item);
     
     counter_destroy(incoming_sms_counter);
+    counter_destroy(incoming_dlr_counter);
     counter_destroy(outgoing_sms_counter);
+    counter_destroy(outgoing_dlr_counter);
 
     load_destroy(incoming_sms_load);
+    load_destroy(incoming_dlr_load);
     load_destroy(outgoing_sms_load);
+    load_destroy(outgoing_dlr_load);
 }
 
 
@@ -625,7 +709,8 @@ int main(int argc, char **argv)
 
     flow_threads = gwlist_create();
     
-    init_bearerbox(cfg);
+    if (init_bearerbox(cfg) == NULL)
+        panic(0, "Initialization failed.");
 
     info(0, "----------------------------------------");
     info(0, GW_NAME " bearerbox II version %s starting", GW_VERSION);
@@ -841,6 +926,10 @@ int bb_restart(void)
     return bb_shutdown();
 }
 
+int bb_reload_lists(void)
+{
+    return smsc2_reload_lists();
+}
 
 #define append_status(r, s, f, x) { s = f(x); octstr_append(r, s); \
                                     octstr_destroy(s); }
@@ -876,9 +965,12 @@ Octstr *bb_print_status(int status_type)
                " <p>WDP: received %ld (%ld queued), sent %ld "
                "(%ld queued)</p>\n\n"
                " <p>SMS: received %ld (%ld queued), sent %ld "
-               "(%ld queued), store size %ld</p>\n"
-               " <p>SMS: inbound (%.2f,%.2f,%.2f) msg/sec, outbound (%.2f,%.2f,%.2f) msg/sec</p>\n\n"
-               " <p>DLR: %ld queued, using %s storage</p>\n\n";
+               "(%ld queued), store size %ld<br>\n"
+               " SMS: inbound (%.2f,%.2f,%.2f) msg/sec, "
+               "outbound (%.2f,%.2f,%.2f) msg/sec</p>\n\n"
+               " <p>DLR: received %ld, sent %ld<br>\n"
+               " DLR: inbound (%.2f,%.2f,%.2f) msg/sec, outbound (%.2f,%.2f,%.2f) msg/sec<br>\n"
+               " DLR: %ld queued, using %s storage</p>\n\n";
         footer = "<p>";
     } else if (status_type == BBSTATUS_WML) {
         frmt = "%s</p>\n\n"
@@ -889,8 +981,12 @@ Octstr *bb_print_status(int status_type)
                "      SMS: sent %ld (%ld queued)<br/>\n"
                "      SMS: store size %ld<br/>\n"
                "      SMS: inbound (%.2f,%.2f,%.2f) msg/sec<br/>\n"
-               "      SMS: outbound (%.2f,%.2f,%.2f) msg/sec</p>\n\n"
-               "   <p>DLR: %ld queued<br/>\n"
+               "      SMS: outbound (%.2f,%.2f,%.2f) msg/sec</p>\n"
+               "   <p>DLR: received %ld<br/>\n"
+               "      DLR: sent %ld<br/>\n"
+               "      DLR: inbound (%.2f,%.2f,%.2f) msg/sec<br/>\n"
+               "      DLR: outbound (%.2f,%.2f,%.2f) msg/sec<br/>\n"
+               "      DLR: %ld queued<br/>\n"
                "      DLR: using %s storage</p>\n\n";
         footer = "<p>";
     } else if (status_type == BBSTATUS_XML) {
@@ -902,14 +998,23 @@ Octstr *bb_print_status(int status_type)
                "\t<sms>\n\t\t<received><total>%ld</total><queued>%ld</queued>"
                "</received>\n\t\t<sent><total>%ld</total><queued>%ld</queued>"
                "</sent>\n\t\t<storesize>%ld</storesize>\n\t\t"
-               "<inbound>%.2f,%.2f,%.2f</inbound>\n\t\t<outbound>%.2f,%.2f,%.2f</outbound>\n\t</sms>\n"
-               "\t<dlr>\n\t\t<queued>%ld</queued>\n\t\t<storage>%s</storage>\n\t</dlr>\n";
+               "<inbound>%.2f,%.2f,%.2f</inbound>\n\t\t"
+               "<outbound>%.2f,%.2f,%.2f</outbound>\n\t\t"
+               "</sms>\n"
+               "\t<dlr>\n\t\t<received><total>%ld</total></received>\n\t\t"
+               "<sent><total>%ld</total></sent>\n\t\t"
+               "<inbound>%.2f,%.2f,%.2f</inbound>\n\t\t"
+               "<outbound>%.2f,%.2f,%.2f</outbound>\n\t\t"
+               "<queued>%ld</queued>\n\t\t<storage>%s</storage>\n\t</dlr>\n";
         footer = "";
     } else {
         frmt = "%s\n\nStatus: %s, uptime %ldd %ldh %ldm %lds\n\n"
                "WDP: received %ld (%ld queued), sent %ld (%ld queued)\n\n"
                "SMS: received %ld (%ld queued), sent %ld (%ld queued), store size %ld\n"
-               "SMS: inbound (%.2f,%.2f,%.2f) msg/sec, outbound (%.2f,%.2f,%.2f) msg/sec\n\n"
+               "SMS: inbound (%.2f,%.2f,%.2f) msg/sec, "
+               "outbound (%.2f,%.2f,%.2f) msg/sec\n\n"
+               "DLR: received %ld, sent %ld\n"
+               "DLR: inbound (%.2f,%.2f,%.2f) msg/sec, outbound (%.2f,%.2f,%.2f) msg/sec\n"
                "DLR: %ld queued, using %s storage\n\n";
         footer = "";
     }
@@ -925,6 +1030,9 @@ Octstr *bb_print_status(int status_type)
         store_messages(),
         load_get(incoming_sms_load,0), load_get(incoming_sms_load,1), load_get(incoming_sms_load,2),
         load_get(outgoing_sms_load,0), load_get(outgoing_sms_load,1), load_get(outgoing_sms_load,2),
+        counter_value(incoming_dlr_counter), counter_value(outgoing_dlr_counter),
+        load_get(incoming_dlr_load,0), load_get(incoming_dlr_load,1), load_get(incoming_dlr_load,2),
+        load_get(outgoing_dlr_load,0), load_get(outgoing_dlr_load,1), load_get(outgoing_dlr_load,2),
         dlr_messages(), dlr_type());
 
     octstr_destroy(version);

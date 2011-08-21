@@ -1,7 +1,7 @@
 /* ==================================================================== 
  * The Kannel Software License, Version 1.0 
  * 
- * Copyright (c) 2001-2009 Kannel Group  
+ * Copyright (c) 2001-2010 Kannel Group  
  * Copyright (c) 1998-2001 WapIT Ltd.   
  * All rights reserved. 
  * 
@@ -102,9 +102,13 @@ extern List *outgoing_sms;
 
 extern Counter *incoming_sms_counter;
 extern Counter *outgoing_sms_counter;
+extern Counter *incoming_dlr_counter;
+extern Counter *outgoing_dlr_counter;
 
 extern Load *outgoing_sms_load;
 extern Load *incoming_sms_load;
+extern Load *incoming_dlr_load;
+extern Load *outgoing_dlr_load;
 
 extern List *flow_threads;
 extern List *suspended;
@@ -199,23 +203,33 @@ static void handle_split(SMSCConn *conn, Msg *msg, long reason)
     struct split_parts *split = msg->sms.split_parts;
     
     /*
-     * If temporarely failed, try again immediately but only if connection active.
-     * Because if connection is not active we will loop for ever here consuming 100% CPU
-     * time due to internal queue cleanup in smsc module that call bb_smscconn_failed.
-     */
-    if (reason == SMSCCONN_FAILED_TEMPORARILY && smscconn_status(conn) == SMSCCONN_ACTIVE &&
-        smscconn_send(conn, msg) == 0) {
-        /* destroy this message because it will be duplicated in smsc module */
-        msg_destroy(msg);
-        return;
-    }
-    
-    /*
      * if the reason is not a success and status is still success
      * then set status of a split to the reason.
      * Note: reason 'malformed','discarded' or 'rejected' has higher priority!
      */
     switch(reason) {
+    case SMSCCONN_FAILED_TEMPORARILY:
+        /*
+         * Check if SMSC link alive and if so increase resend_try and set resend_time.
+         * If SMSC link is not active don't increase resend_try and don't set resend_time
+         * because we don't want to delay messages due to broken connection.
+         */
+        if (smscconn_status(conn) == SMSCCONN_ACTIVE) {
+            /*
+             * Check if sms_resend_retry set and this msg has exceeded a limit also
+             * honor "single shot" with sms_resend_retry set to zero.
+             */
+            if (sms_resend_retry >= 0 && msg->sms.resend_try >= sms_resend_retry) {
+                warning(0, "Maximum retries for message exceeded, discarding it!");
+                bb_smscconn_send_failed(NULL, msg, SMSCCONN_FAILED_DISCARDED,
+                                        octstr_create("Retries Exceeded"));
+                return;
+            }
+            msg->sms.resend_try = (msg->sms.resend_try > 0 ? msg->sms.resend_try + 1 : 1);
+            time(&msg->sms.resend_time);
+        }
+        gwlist_produce(outgoing_sms, msg);
+        return;
     case SMSCCONN_FAILED_DISCARDED:
     case SMSCCONN_FAILED_REJECTED:
     case SMSCCONN_FAILED_MALFORMED:
@@ -261,15 +275,27 @@ void bb_smscconn_sent(SMSCConn *conn, Msg *sms, Octstr *reply)
         octstr_destroy(reply);
         return;
     }
-    
-    counter_increase(outgoing_sms_counter);
-    load_increase(outgoing_sms_load);
-    if (conn) counter_increase(conn->sent);
 
     /* write ACK to store file */
     store_save_ack(sms, ack_success);
 
-    bb_alog_sms(conn, sms, "Sent SMS");
+    if (sms->sms.sms_type != report_mt) {
+        bb_alog_sms(conn, sms, "Sent SMS");
+        counter_increase(outgoing_sms_counter);
+        load_increase(outgoing_sms_load);
+        if (conn != NULL) {
+            counter_increase(conn->sent);
+            load_increase(conn->outgoing_sms_load);
+        }
+    } else {
+        bb_alog_sms(conn, sms, "Sent DLR");
+        counter_increase(outgoing_dlr_counter);
+        load_increase(outgoing_dlr_load);
+        if (conn != NULL) {
+            counter_increase(conn->sent_dlr);
+            load_increase(conn->outgoing_dlr_load);
+        }
+    }
 
     /* generate relay confirmancy message */
     if (DLR_IS_SMSC_SUCCESS(sms->sms.dlr_mask)) {
@@ -304,7 +330,7 @@ void bb_smscconn_send_failed(SMSCConn *conn, Msg *sms, int reason, Octstr *reply
         /*
          * Check if SMSC link alive and if so increase resend_try and set resend_time.
          * If SMSC link is not active don't increase resend_try and don't set resend_time
-         * because we don't want to delay messages because of connection broken.
+         * because we don't want to delay messages due to a broken connection.
          */
        if (conn && smscconn_status(conn) == SMSCCONN_ACTIVE) {
             /*
@@ -449,8 +475,10 @@ long bb_smscconn_receive(SMSCConn *conn, Msg *sms)
             case concat_pending:
                 counter_increase(incoming_sms_counter); /* ?? */
                 load_increase(incoming_sms_load);
-                if (conn != NULL)
+                if (conn != NULL) {
                     counter_increase(conn->received);
+                    load_increase(conn->incoming_sms_load);
+                }
                 msg_destroy(sms);
                 return SMSCCONN_SUCCESS;
             case concat_complete:
@@ -495,14 +523,23 @@ long bb_smscconn_receive(SMSCConn *conn, Msg *sms)
         return (rc == -1 ? SMSCCONN_FAILED_QFULL : rc);
     }
 
-    if (sms->sms.sms_type != report_mo)
-	bb_alog_sms(conn, sms, "Receive SMS");
-    else
-	bb_alog_sms(conn, sms, "Receive DLR");
-
-    counter_increase(incoming_sms_counter);
-    load_increase(incoming_sms_load);
-    if (conn != NULL) counter_increase(conn->received);
+    if (sms->sms.sms_type != report_mo) {
+        bb_alog_sms(conn, sms, "Receive SMS");
+        counter_increase(incoming_sms_counter);
+        load_increase(incoming_sms_load);
+        if (conn != NULL) {
+            counter_increase(conn->received);
+            load_increase(conn->incoming_sms_load);
+        }
+    } else {
+        bb_alog_sms(conn, sms, "Receive DLR");
+        counter_increase(incoming_dlr_counter);
+        load_increase(incoming_dlr_load);
+        if (conn != NULL) {
+            counter_increase(conn->received_dlr);
+            load_increase(conn->incoming_dlr_load);
+        }
+    }
 
     msg_destroy(sms);
 
@@ -924,6 +961,40 @@ int smsc2_add_smsc(Octstr *id)
     return 0;
 }
 
+int smsc2_reload_lists(void)
+{
+    Numhash *tmp;
+    int rc = 1;
+
+    if (white_list_url != NULL) {
+        tmp = numhash_create(octstr_get_cstr(white_list_url));
+        if (white_list == NULL) {
+            error(0, "Unable to reload white_list."),
+            rc = -1;
+        } else {
+        	gw_rwlock_wrlock(&white_black_list_lock);
+        	numhash_destroy(white_list);
+        	white_list = tmp;
+        	gw_rwlock_unlock(&white_black_list_lock);
+        }
+    }
+
+    if (black_list_url != NULL) {
+        tmp = numhash_create(octstr_get_cstr(black_list_url));
+        if (black_list == NULL) {
+            error(0, "Unable to reload black_list");
+            rc = -1;
+        } else {
+        	gw_rwlock_wrlock(&white_black_list_lock);
+        	numhash_destroy(black_list);
+        	black_list = tmp;
+        	gw_rwlock_unlock(&white_black_list_lock);
+        }
+    }
+
+    return rc;
+}
+
 void smsc2_resume(void)
 {
     SMSCConn *conn;
@@ -1048,6 +1119,10 @@ Octstr *smsc2_status(int status_type)
     const Octstr *conn_id = NULL;
     const Octstr *conn_admin_id = NULL;
     const Octstr *conn_name = NULL;
+    float incoming_sms_load_0, incoming_sms_load_1, incoming_sms_load_2;
+    float outgoing_sms_load_0, outgoing_sms_load_1, outgoing_sms_load_2;
+    float incoming_dlr_load_0, incoming_dlr_load_1, incoming_dlr_load_2;
+    float outgoing_dlr_load_0, outgoing_dlr_load_1, outgoing_dlr_load_2;
 
     if ((lb = bb_status_linebreak(status_type)) == NULL)
         return octstr_create("Un-supported format");
@@ -1070,6 +1145,10 @@ Octstr *smsc2_status(int status_type)
 
     gw_rwlock_rdlock(&smsc_list_lock);
     for (i = 0; i < gwlist_len(smsc_list); i++) {
+        incoming_sms_load_0 = incoming_sms_load_1 = incoming_sms_load_2 = 0.0;
+        outgoing_sms_load_0 = outgoing_sms_load_1 = outgoing_sms_load_2 = 0.0;
+        incoming_dlr_load_0 = incoming_dlr_load_1 = incoming_dlr_load_2 = 0.0;
+        outgoing_dlr_load_0 = outgoing_dlr_load_1 = outgoing_dlr_load_2 = 0.0;
         conn = gwlist_get(smsc_list, i);
 
         if ((smscconn_info(conn, &info) == -1)) {
@@ -1114,6 +1193,18 @@ Octstr *smsc2_status(int status_type)
             case SMSCCONN_ACTIVE:
             case SMSCCONN_ACTIVE_RECV:
                 sprintf(tmp3, "online %lds", info.online);
+                incoming_sms_load_0 = load_get(conn->incoming_sms_load,0);
+                incoming_sms_load_1 = load_get(conn->incoming_sms_load,1);
+                incoming_sms_load_2 = load_get(conn->incoming_sms_load,2);
+                outgoing_sms_load_0 = load_get(conn->outgoing_sms_load,0);
+                outgoing_sms_load_1 = load_get(conn->outgoing_sms_load,1);
+                outgoing_sms_load_2 = load_get(conn->outgoing_sms_load,2);
+                incoming_dlr_load_0 = load_get(conn->incoming_dlr_load,0);
+                incoming_dlr_load_1 = load_get(conn->incoming_dlr_load,1);
+                incoming_dlr_load_2 = load_get(conn->incoming_dlr_load,2);
+                outgoing_dlr_load_0 = load_get(conn->outgoing_dlr_load,0);
+                outgoing_dlr_load_1 = load_get(conn->outgoing_dlr_load,1);
+                outgoing_dlr_load_2 = load_get(conn->outgoing_dlr_load,2);
                 break;
             case SMSCCONN_DISCONNECTED:
                 sprintf(tmp3, "disconnected");
@@ -1130,19 +1221,50 @@ Octstr *smsc2_status(int status_type)
             default:
                 sprintf(tmp3, "unknown");
         }
-	
+
         if (status_type == BBSTATUS_XML)
-            octstr_format_append(tmp, "<status>%s</status>\n\t\t<received>%ld</received>"
-                "\n\t\t<sent>%ld</sent>\n\t\t<failed>%ld</failed>\n\t\t"
-                "<queued>%ld</queued>\n\t</smsc>\n", tmp3,
-                info.received, info.sent, info.failed,
-                info.queued);
+            octstr_format_append(tmp, "<status>%s</status>\n"
+                "\t\t<failed>%ld</failed>\n"
+                "\t\t<queued>%ld</queued>\n"
+                "\t\t<sms>\n"
+                "\t\t\t<received>%ld</received>\n"
+                "\t\t\t<sent>%ld</sent>\n"
+                "\t\t\t<inbound>%.2f,%.2f,%.2f</inbound>\n"
+                "\t\t\t<outbound>%.2f,%.2f,%.2f</outbound>\n"
+                "\t\t</sms>\n\t\t<dlr>\n"
+                "\t\t\t<received>%ld</received>\n"
+                "\t\t\t<sent>%ld</sent>\n"
+                "\t\t\t<inbound>%.2f,%.2f,%.2f</inbound>\n"
+                "\t\t\t<outbound>%.2f,%.2f,%.2f</outbound>\n"
+                "\t\t</dlr>\n"
+                "\t</smsc>\n", tmp3,
+                info.failed, info.queued, info.received, info.sent,
+                incoming_sms_load_0, incoming_sms_load_1, incoming_sms_load_2,
+                outgoing_sms_load_0, outgoing_sms_load_1, outgoing_sms_load_2,
+                info.received_dlr, info.sent_dlr,
+                incoming_dlr_load_0, incoming_dlr_load_1, incoming_dlr_load_2,
+                outgoing_dlr_load_0, outgoing_dlr_load_1, outgoing_dlr_load_2);
         else
-            octstr_format_append(tmp, " (%s, rcvd %ld, sent %ld, failed %ld, "
-                "queued %ld msgs)%s", tmp3,
-            info.received, info.sent, info.failed,
-            info.queued, lb);
+            octstr_format_append(tmp, " (%s, rcvd: sms %ld (%.2f,%.2f,%.2f) / dlr %ld (%.2f,%.2f,%.2f), "
+                "sent: sms %ld (%.2f,%.2f,%.2f) / dlr %ld (%.2f,%.2f,%.2f), failed %ld, "
+                "queued %ld msgs)%s",
+                tmp3,
+                info.received,
+                incoming_sms_load_0, incoming_sms_load_1, incoming_sms_load_2,
+                info.received_dlr,
+                incoming_dlr_load_0, incoming_dlr_load_1, incoming_dlr_load_2,
+                info.sent,
+                outgoing_sms_load_0, outgoing_sms_load_1, outgoing_sms_load_2,
+                info.sent_dlr,
+                outgoing_dlr_load_0, outgoing_dlr_load_1, outgoing_dlr_load_2,
+                info.failed,
+                info.queued,
+                lb);
     }
+
+
+
+
     gw_rwlock_unlock(&smsc_list_lock);
 
     if (para)
@@ -1196,72 +1318,79 @@ long smsc2_rout(Msg *msg, int resend)
         return SMSCCONN_FAILED_DISCARDED;
     }
 
-    /*
-     * if global queue not empty then 20% reserved for old msgs
-     * and 80% for new msgs. So we can guarantee that old msgs find
-     * place in the SMSC's queue.
-     */
-    if (gwlist_len(outgoing_sms) > 0) {
-        max_queue = (resend ? max_outgoing_sms_qlength :
-                               max_outgoing_sms_qlength * 0.8);
-    }
-    else
-        max_queue = max_outgoing_sms_qlength;
-
-    s = gw_rand() % gwlist_len(smsc_list);
     best_preferred = best_ok = NULL;
     bad_found = full_found = 0;
     bp_load = bo_load = queue_length = 0;
 
-    conn = NULL;
-    for (i=0; i < gwlist_len(smsc_list); i++) {
-	conn = gwlist_get(smsc_list,  (i+s) % gwlist_len(smsc_list));
+    if (msg->sms.split_parts == NULL) {
+    	/*
+    	 * if global queue not empty then 20% reserved for old msgs
+    	 * and 80% for new msgs. So we can guarantee that old msgs find
+    	 * place in the SMSC's queue.
+    	 */
+    	if (gwlist_len(outgoing_sms) > 0) {
+    		max_queue = (resend ? max_outgoing_sms_qlength :
+    		max_outgoing_sms_qlength * 0.8);
+    	} else
+    		max_queue = max_outgoing_sms_qlength;
 
-	smscconn_info(conn, &info);
-        queue_length += (info.queued > 0 ? info.queued : 0);
+    	s = gw_rand() % gwlist_len(smsc_list);
 
-        ret = smscconn_usable(conn,msg);
-	if (ret == -1)
-	    continue;
+    	conn = NULL;
+    	for (i = 0; i < gwlist_len(smsc_list); i++) {
+    		conn = gwlist_get(smsc_list,  (i+s) % gwlist_len(smsc_list));
 
-	/* if we already have a preferred one, skip non-preferred */
-	if (ret != 1 && best_preferred)
-	    continue;
+    		smscconn_info(conn, &info);
+    		queue_length += (info.queued > 0 ? info.queued : 0);
 
-	/* If connection is not currently answering ... */
-	if (info.status != SMSCCONN_ACTIVE) {
-	    bad_found = 1;
-	    continue;
-	}
-        /* check queue length */
-        if (info.queued > max_queue) {
-            full_found = 1;
-            continue;
-        }
-	if (ret == 1) {          /* preferred */
-	    if (best_preferred == NULL || info.load < bp_load) {
-		best_preferred = conn;
-		bp_load = info.load;
-		continue;
-	    }
-	}
-	if (best_ok == NULL || info.load < bo_load) {
-	    best_ok = conn;
-	    bo_load = info.load;
-	}
-    }
-    queue_length += gwlist_len(outgoing_sms);
-    if (max_outgoing_sms_qlength > 0 && !resend &&
-         queue_length > gwlist_len(smsc_list) * max_outgoing_sms_qlength) {
-        gw_rwlock_unlock(&smsc_list_lock);
-        debug("bb.sms", 0, "sum(#queues) limit");
-        return SMSCCONN_FAILED_QFULL;
+    		ret = smscconn_usable(conn,msg);
+    		if (ret == -1)
+    			continue;
+
+    		/* if we already have a preferred one, skip non-preferred */
+    		if (ret != 1 && best_preferred)
+    			continue;
+
+    		/* If connection is not currently answering ... */
+    		if (info.status != SMSCCONN_ACTIVE) {
+    			bad_found = 1;
+    			continue;
+    		}
+    		/* check queue length */
+    		if (info.queued > max_queue) {
+    			full_found = 1;
+    			continue;
+    		}
+    		if (ret == 1) {          /* preferred */
+    			if (best_preferred == NULL || info.load < bp_load) {
+    				best_preferred = conn;
+    				bp_load = info.load;
+    				continue;
+    			}
+    		}
+    		if (best_ok == NULL || info.load < bo_load) {
+    			best_ok = conn;
+    			bo_load = info.load;
+    		}
+    	}
+    	queue_length += gwlist_len(outgoing_sms);
+    	if (max_outgoing_sms_qlength > 0 && !resend &&
+    	    queue_length > gwlist_len(smsc_list) * max_outgoing_sms_qlength) {
+    		gw_rwlock_unlock(&smsc_list_lock);
+    		debug("bb.sms", 0, "sum(#queues) limit");
+    		return SMSCCONN_FAILED_QFULL;
+    	}
+    } else {
+        struct split_parts *parts = msg->sms.split_parts;
+        /* check whether this SMSCConn still on the list */
+        if (gwlist_search_equal(smsc_list, parts->smsc_conn) != -1)
+            best_preferred = parts->smsc_conn;
     }
 
     if (best_preferred)
-	ret = smscconn_send(best_preferred, msg);
+        ret = smscconn_send(best_preferred, msg);
     else if (best_ok)
-	ret = smscconn_send(best_ok, msg);
+        ret = smscconn_send(best_ok, msg);
     else if (bad_found) {
         gw_rwlock_unlock(&smsc_list_lock);
         if (max_outgoing_sms_qlength < 0 || gwlist_len(outgoing_sms) < max_outgoing_sms_qlength) {
@@ -1270,17 +1399,15 @@ long smsc2_rout(Msg *msg, int resend)
         }
         debug("bb.sms", 0, "bad_found queue full");
         return SMSCCONN_FAILED_QFULL; /* queue full */
-    }
-    else if (full_found) {
+    } else if (full_found) {
         gw_rwlock_unlock(&smsc_list_lock);
         debug("bb.sms", 0, "full_found queue full");
         return SMSCCONN_FAILED_QFULL;
-    }
-    else {
+    } else {
         gw_rwlock_unlock(&smsc_list_lock);
         if (bb_status == BB_SHUTDOWN) {
             msg_destroy(msg);
-	    return SMSCCONN_QUEUED;
+            return SMSCCONN_QUEUED;
         }
         warning(0, "Cannot find SMSCConn for message to <%s>, rejected.",
                     octstr_get_cstr(msg->sms.receiver));
@@ -1291,7 +1418,7 @@ long smsc2_rout(Msg *msg, int resend)
     gw_rwlock_unlock(&smsc_list_lock);
     /* check the status of sending operation */
     if (ret == -1)
-	return smsc2_rout(msg, resend); /* re-try */
+        return smsc2_rout(msg, resend); /* re-try */
 
     msg_destroy(msg);
     return SMSCCONN_SUCCESS;
@@ -1363,6 +1490,7 @@ typedef struct ConcatMsg {
     int refnum;
     int total_parts;
     int num_parts;
+    Octstr *udh; /* normalized UDH */
     time_t trecv;
     Octstr *key; /* in dict. */
     int ack;     /* set to the type of ack to send when deleting. */
@@ -1387,6 +1515,7 @@ static void destroy_concatMsg(void *x)
     }
     gw_free(msg->parts);
     octstr_destroy(msg->key);
+    octstr_destroy(msg->udh);
     gw_free(msg);
 }
 
@@ -1397,7 +1526,7 @@ static void init_concat_handler(void)
     incoming_concat_msgs = dict_create(max_incoming_sms_qlength > 0 ? max_incoming_sms_qlength : 1024, 
                                        destroy_concatMsg);
     concat_lock = mutex_create();
-    debug("bb.sms",0,"smsbox MO concatenated message handling enabled");
+    debug("bb.sms",0,"MO concatenated message handling enabled");
 }
 
 static void shutdown_concat_handler(void)
@@ -1409,7 +1538,7 @@ static void shutdown_concat_handler(void)
 
     incoming_concat_msgs = NULL;
     concat_lock = NULL;
-    debug("bb.sms",0,"smsbox MO concatenated message handling cleaned up");
+    debug("bb.sms",0,"MO concatenated message handling cleaned up");
 }
 
 static void clear_old_concat_parts(void)
@@ -1505,7 +1634,7 @@ static void clear_old_concat_parts(void)
 static int check_concatenation(Msg **pmsg, Octstr *smscid)
 {
     Msg *msg = *pmsg;
-    int l, iel, refnum, pos, c, part, totalparts, i, sixteenbit;
+    int l, iel = 0, refnum, pos, c, part, totalparts, i, sixteenbit;
     Octstr *udh = msg->sms.udhdata, *key;
     ConcatMsg *cmsg;
     int ret = concat_complete;
@@ -1516,7 +1645,7 @@ static int check_concatenation(Msg **pmsg, Octstr *smscid)
 
     for (pos = 1, c = -1; pos < l - 1; pos += iel + 2) {
         iel = octstr_get_char(udh, pos + 1);
-        if ((c = octstr_get_char(udh,pos)) == 0 || c == 8)
+        if ((c = octstr_get_char(udh, pos)) == 0 || c == 8)
             break;
     }
     if (pos >= l)  /* no concat UDH found. */
@@ -1525,7 +1654,7 @@ static int check_concatenation(Msg **pmsg, Octstr *smscid)
     /* c = 0 means 8 bit, c = 8 means 16 bit concat info */
     sixteenbit = (c == 8);
     refnum = (!sixteenbit) ? octstr_get_char(udh, pos + 2) :
-        (octstr_get_char(udh, pos + 2) << 8) | octstr_get_char(udh, pos + 3);
+    		(octstr_get_char(udh, pos + 2) << 8) | octstr_get_char(udh, pos + 3);
     totalparts = octstr_get_char(udh, pos + 3 + sixteenbit);
     part = octstr_get_char(udh, pos + 4 + sixteenbit);
 
@@ -1535,17 +1664,27 @@ static int check_concatenation(Msg **pmsg, Octstr *smscid)
         return concat_none;
     }
 
+    /* extract UDH */
+    udh = octstr_duplicate(msg->sms.udhdata);
+    octstr_delete(udh, pos, iel + 2);
+    if (octstr_len(udh) <= 1) /* no other UDH elements. */
+    	octstr_delete(udh, 0, octstr_len(udh));
+    else
+    	octstr_set_char(udh, 0, octstr_len(udh) - 1);
+
     debug("bb.sms.splits", 0, "Got part %d [ref %d, total parts %d] of message from %s. Dump follows:",
-          part, refnum,totalparts, octstr_get_cstr(msg->sms.sender));
+          part, refnum, totalparts, octstr_get_cstr(msg->sms.sender));
      
-    msg_dump(msg,0);
+    msg_dump(msg, 0);
      
-    key = octstr_format("%S %S %S %d", msg->sms.sender, msg->sms.receiver, smscid, refnum);
+    key = octstr_format("'%S' '%S' '%S' '%d' '%d' '%H'", msg->sms.sender, msg->sms.receiver, smscid, refnum, totalparts, udh);
     mutex_lock(concat_lock);
     if ((cmsg = dict_get(incoming_concat_msgs, key)) == NULL) {
         cmsg = gw_malloc(sizeof(*cmsg));
         cmsg->refnum = refnum;
         cmsg->total_parts = totalparts;
+        cmsg->udh = udh;
+        udh = NULL;
         cmsg->num_parts = 0;
         cmsg->key = octstr_duplicate(key);
         cmsg->ack = ack_success;
@@ -1555,18 +1694,7 @@ static int check_concatenation(Msg **pmsg, Octstr *smscid)
         dict_put(incoming_concat_msgs, key, cmsg);
     }
     octstr_destroy(key);
-
-    if (totalparts != cmsg->total_parts) {
-        /* totalparts in udh and cmsg not equal assume bad message */
-        error(0, "Totalparts in UDH doesn't match received before, "
-                "total parts <%d>:<%d> part %d, ref %d, from %s, to %s. Discarded!",
-                cmsg->total_parts, totalparts, part, refnum, octstr_get_cstr(msg->sms.sender), octstr_get_cstr(msg->sms.receiver));
-        mutex_unlock(concat_lock);
-        store_save_ack(msg, ack_success);
-        msg_destroy(msg);
-        *pmsg = msg = NULL;
-        return concat_error;
-    }
+    octstr_destroy(udh);
 
     /* check if we have seen message part before... */
     if (cmsg->parts[part - 1] != NULL) {	  
@@ -1607,66 +1735,20 @@ static int check_concatenation(Msg **pmsg, Octstr *smscid)
     } else 
         *pmsg = msg; /* return the message part. */
 
+    /* fix up UDH */
+    octstr_destroy(msg->sms.udhdata);
+    msg->sms.udhdata = cmsg->udh;
+    cmsg->udh = NULL;
+
     /* Delete it from the queue and from the Dict. */
     /* Note: dict_put with NULL value delete and destroy value */
     dict_put(incoming_concat_msgs, cmsg->key, NULL);
     mutex_unlock(concat_lock);
 
-    /* fix up UDH */
-    udh = msg->sms.udhdata;
-    l = octstr_len(udh);
-    for (pos = 1; pos < l - 1; pos += iel + 2) {
-        iel = octstr_get_char(udh, pos + 1);
-        if ((c = octstr_get_char(udh, pos)) == 0 || c == 8) {
-            octstr_delete(udh, pos, iel + 2);
-
-            if (octstr_len(udh) <= 1) /* no other UDH elements. */
-                octstr_delete(udh, 0, octstr_len(udh));
-            else
-                octstr_set_char(udh, 0, octstr_len(udh) - 1);
-            break;
-        }
-    }
     debug("bb.sms.splits", 0, "Got full message [ref %d] of message from %s to %s. Dumping: ",
           refnum, octstr_get_cstr(msg->sms.sender), octstr_get_cstr(msg->sms.receiver));
     msg_dump(msg,0);
 
     return ret;
-}
-
-int bb_reload_lists(void)
-{
-    Numhash *tmp;
-    int rc = 1;
-    
-    if (white_list_url != NULL) {
-        tmp = numhash_create(octstr_get_cstr(white_list_url));
-
-        gw_rwlock_wrlock(&white_black_list_lock);
-        numhash_destroy(white_list);
-        white_list = tmp;
-        gw_rwlock_unlock(&white_black_list_lock);
-
-        if (white_list == NULL) {
-            error(0, "Unable to reload white_list."),
-            rc = -1;
-        }
-    }
-
-    if (black_list_url != NULL) {
-        tmp = numhash_create(octstr_get_cstr(black_list_url));
-
-        gw_rwlock_wrlock(&white_black_list_lock);
-        numhash_destroy(black_list);
-        black_list = tmp;
-        gw_rwlock_unlock(&white_black_list_lock);
-
-        if (black_list == NULL) {
-            error(0, "Unable to reload black_list");
-            rc = -1;
-        }
-    }
-
-    return rc;
 }
 

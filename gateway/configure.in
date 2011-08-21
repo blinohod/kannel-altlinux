@@ -1,7 +1,7 @@
 dnl /* ==================================================================== 
 dnl  * The Kannel Software License, Version 1.0 
 dnl  * 
-dnl  * Copyright (c) 2001-2009 Kannel Group  
+dnl  * Copyright (c) 2001-2010 Kannel Group  
 dnl  * Copyright (c) 1998-2001 WapIT Ltd.   
 dnl  * All rights reserved. 
 dnl  * 
@@ -73,11 +73,11 @@ AC_CONFIG_NICE(config.nice)
 
 dnl Check gateway version number.
 VERSION=`head -n 1 VERSION`
-if test "x$VERSION" = "xcvs"; then
-  AC_MSG_CHECKING([cvs checkout date])
-  AC_CVS_DATE(CVS_DATE)
-  AC_MSG_RESULT([$CVS_DATE])
-  VERSION="$VERSION-$CVS_DATE"
+if test "x$VERSION" = "xsvn"; then
+  AC_MSG_CHECKING([svn checkout revision])
+  AC_SVN_REVISION(SVN_REVISION)
+  AC_MSG_RESULT([$SVN_REVISION])
+  VERSION="$VERSION-r$SVN_REVISION"
 fi
 AC_DEFINE_UNQUOTED(GW_NAME, "Kannel")
 AC_DEFINE_UNQUOTED(GW_VERSION, "$VERSION")
@@ -138,7 +138,7 @@ case "$host" in
     # location libs and includes.
     found=0
     SDK=""
-    for loc in "MacOSX10.5.sdk" "MacOSX10.4u.sdk" "MacOSX10.4.0.sdk" "MacOSX10.3.9.sdk" \
+    for loc in "MacOSX10.6.sdk" "MacOSX10.5.sdk" "MacOSX10.4u.sdk" "MacOSX10.4.0.sdk" "MacOSX10.3.9.sdk" \
 	           "MacOSX10.3.0.sdk" "MacOSX10.2.8.sdk" "MacOSX10.1.5.sdk"
   	do 
       if test "$found" = "0" ; then
@@ -164,6 +164,9 @@ case "$host" in
     AC_CHECK_LIB(pthread, pthread_exit, [LIBS="$LIBS -lpthread"; pthread="yes"],
       [AC_CHECK_LIB(c_r, pthread_exit, [LIBS="$LIBS -lc_r"; pthread="yes"])]
     )
+    ;;
+  *-interix3*)
+    INSTALL="./install-sh"
     ;;
 esac
 AC_SUBST(EXE_EXT)
@@ -249,7 +252,7 @@ AM_ICONV
 
 dnl Checks for library functions.
 
-AC_CHECK_FUNCS(gettimeofday select socket strdup getopt_long localtime_r gmtime_r backtrace srandom)
+AC_CHECK_FUNCS(gettimeofday select socket strdup getopt_long localtime_r gmtime_r backtrace srandom initgroups strtoll strtoq)
 AC_CHECK_FUNC(getopt, [], [AC_LIBOBJ([utils/attgetopt])])
 
 dnl Check if we have reentrant gethostbyname and which one
@@ -339,7 +342,15 @@ dnl Checking pthread_spin support
 dnl
 AC_MSG_CHECKING([for pthread_spinlock support])
 AC_TRY_COMPILE([#include <pthread.h>], [
+#ifdef __INTERIX
+/*
+ * interix has experimental spinlock support and this doesn't work very well
+ * therefore disable it for now
+ */
+pthread_spinlock_t_failed lock;
+#else
 pthread_spinlock_t lock;
+#endif
 pthread_spin_init(&lock, 0);
 pthread_spin_lock(&lock);
 pthread_spin_unlock(&lock);
