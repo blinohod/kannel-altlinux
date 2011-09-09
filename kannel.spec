@@ -161,6 +161,9 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 * Fri Sep 09 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt3cvs20110819
 - Added configs with included other
 
+* Wed Sep 07 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt2cvs20110819
+- Prepared for buiding
+
 * Wed Sep 07 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt2cvs20110819
 - Update sources from upstream SVN 2011-08-19
 
