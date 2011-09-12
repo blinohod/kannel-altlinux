@@ -24,41 +24,35 @@ RETVAL=0
 
 SourceIfExists /etc/sysconfig/kannel
 
+#start()
+#{
+#    echo "reboted" > /etc/kannel/generated/.restart
+#    echo -n "Starting bearerbox... "
+#    $BRBCMD -d -u kannel -F /var/log/kannel/bb_extra.log $CONF
+#    #touch "$BRBLOCKFILE"
+#    echo "done"
+#    echo -n
+#    sleep 2
+#    echo -n "Starting smsbox... "
+#    $SMSCMD -d -u kannel -F /var/log/kannel/sb_extra.log $CONF 
+#    #touch "$SMSLOCKFILE"
+#    echo "done"
+#}
+
+
 start()
 {
-
-#    echo "reboted" > /etc/kannel/generated/.restart
-    echo -n "Starting bearerbox... "
-    $BRBCMD -d -u kannel -F /var/log/kannel/bb_extra.log $CONF
-    #touch "$BRBLOCKFILE"
-    echo "done"
-    echo -n
-    sleep 2
-    echo -n "Starting smsbox... "
-    $SMSCMD -d -u kannel -F /var/log/kannel/sb_extra.log $CONF 
-    #touch "$SMSLOCKFILE"
-    echo "done"
+       start_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --name bearerbox -x $BRBCMD -- -u kannel -p "$BRBPIDFILE" -d $CONF
+       sleep 3
+       start_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --name smsbox -x $SMSCMD -- -u kannel -p "$SMSPIDFILE" -d $CONF
+       RETVAL=$?
+       return $RETVAL
 }
-
-
-#start2()
-#{
-#       # nginx can work with many files at one time
-#       [ -n "$ULIMIT_ARGS" ] && ulimit $ULIMIT_ARGS
-#       start_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --name bearerbox -- bearerbox -u kannel -p "$BRBPIDFILE" -d $CONF
-#       start_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --name smsbox -- smsbox -u kannel -p "$SMSPIDFILE" -d $CONF
-#       RETVAL=$?
-#       return $RETVAL
-#}
 
 stop()
 {
-        echo -n "Stoping smsbox... "
-        killall -TERM smsbox
-        echo "done"
-        echo -n "Stoping bearerbox... "
-        killall -TERM bearerbox
-        echo "done"
+	stop_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --no-announce --retry=TERM/10/KILL/5 -- $SMSCMD
+	stop_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --no-announce --retry=TERM/10/KILL/5 -- $BRBCMD
         RETVAL=$?
         return $RETVAL
 }
@@ -76,8 +70,7 @@ restart()
 # See how we were called.
 case "$1" in
         start)
-                RETVAL=$?
-                [ $RETVAL -eq 0 ] && start ||:
+    		start
                 ;;
         stop)
                 stop
@@ -96,7 +89,7 @@ case "$1" in
                 fi
                 ;;
         *)
-                msg_usage "kannel.all {start|stop|restart|condstop|condrestart}"
+                msg_usage "kannel {start|stop|restart|condstop|condrestart}"
                 RETVAL=1
 esac
 
