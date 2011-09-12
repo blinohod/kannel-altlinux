@@ -42,17 +42,17 @@ SourceIfExists /etc/sysconfig/kannel
 
 start()
 {
-       start_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --name bearerbox -x $BRBCMD -- -u kannel -p "$BRBPIDFILE" -d $CONF
+       start_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --name bearerbox -- $BRBCMD -u kannel -p "$BRBPIDFILE" -d $CONF
        sleep 3
-       start_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --name smsbox -x $SMSCMD -- -u kannel -p "$SMSPIDFILE" -d $CONF
+       start_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --name smsbox -- $SMSCMD -u kannel -p "$SMSPIDFILE" -d $CONF
        RETVAL=$?
        return $RETVAL
 }
 
 stop()
 {
-	stop_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel --no-announce --retry=TERM/10/KILL/5 -- $SMSCMD
-	stop_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel --no-announce --retry=TERM/10/KILL/5 -- $BRBCMD
+	stop_daemon --pidfile "$SMSPIDFILE" --lockfile "$SMSLOCKFILE" --expect-user kannel -- $SMSCMD
+	stop_daemon --pidfile "$BRBPIDFILE" --lockfile "$BRBLOCKFILE" --expect-user kannel -- $BRBCMD
         RETVAL=$?
         return $RETVAL
 }

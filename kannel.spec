@@ -9,7 +9,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt4.cvs%cvs_build
+Release: alt5.cvs%cvs_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -115,6 +115,7 @@ mkdir -p %buildroot%_initdir
 mkdir -p %buildroot%_logdir/kannel
 mkdir -p %buildroot%_localstatedir/kannel/cdr
 mkdir -p %buildroot%_var/run/kannel
+mkdir -p %buildroot%_var/spool/kannel
 install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
 install -m 755 test/wapproxy %buildroot%_bindir
@@ -149,6 +150,7 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_initdir/*
 %attr(0770,%kannel_user,%kannel_group) %dir %_logdir/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_var/run/kannel
+%attr(0770,%kannel_user,%kannel_group) %dir %_var/spool/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel/cdr
 
@@ -158,6 +160,9 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Mon Sep 12 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt5cvs20110819
+- Tuned
+
 * Mon Sep 12 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt4cvs20110819
 - Internal DLR storage
 
