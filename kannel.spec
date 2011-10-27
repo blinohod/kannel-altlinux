@@ -17,7 +17,6 @@ Source: gateway-%version.tar.bz2
 Source1: config-%version.tar.bz2
 Source2: bearerbox.init
 Source3: smsbox.init
-Source4: kannel.init
 Source5: kannel.logrotate
 Source6: kannel.monit
 
@@ -91,7 +90,6 @@ cd gateway-%version
 %makeinstall
 
 %make_install install-docs DESTDIR=%buildroot
-#mv %%buildroot%%_datadir/doc/kannel _docs
 
 mkdir -p %buildroot%_sysconfdir/logrotate.d
 mkdir -p %buildroot%_sysconfdir/monitrc.d
@@ -106,7 +104,6 @@ install -m 755 test/wapproxy %buildroot%_bindir
 install -m 755 test/store_tools %buildroot%_bindir/kannel-store-tools
 install -m 755 %SOURCE2 %buildroot%_initdir/kannel.bearerbox
 install -m 755 %SOURCE3 %buildroot%_initdir/kannel.smsbox
-install -m 755 %SOURCE4 %buildroot%_initdir/kannel
 install -m 755 %SOURCE5 %buildroot%_sysconfdir/logrotate.d/kannel
 install -m 755 %SOURCE6 %buildroot%_sysconfdir/monitrc.d/kannel
 cp -rf ../config %buildroot%_sysconfdir/kannel
