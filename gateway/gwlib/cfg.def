@@ -504,6 +504,34 @@ MULTI_GROUP(sendsms-user,
 )
 
 
+MULTI_GROUP(sendsms-pam-user,
+    OCTSTR(name)
+    OCTSTR(acl)
+    OCTSTR(user-deny-ip)
+    OCTSTR(user-allow-ip)
+    OCTSTR(forced-smsc)
+    OCTSTR(default-smsc)
+    OCTSTR(faked-sender)
+    OCTSTR(default-sender)
+    OCTSTR(max-messages)
+    OCTSTR(concatenation)
+    OCTSTR(split-chars)
+    OCTSTR(split-suffix)
+    OCTSTR(omit-empty)
+    OCTSTR(header)
+    OCTSTR(footer)
+    OCTSTR(allowed-prefix)
+    OCTSTR(denied-prefix)
+    OCTSTR(white-list)
+    OCTSTR(black-list)
+    OCTSTR(dlr-url)
+    OCTSTR(allowed-prefix-regex)
+    OCTSTR(denied-prefix-regex)
+    OCTSTR(white-list-regex)
+    OCTSTR(black-list-regex)
+)
+
+
 MULTI_GROUP(ota-setting,
     OCTSTR(ota-id)
     OCTSTR(location)
