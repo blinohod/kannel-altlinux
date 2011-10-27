@@ -122,6 +122,8 @@ SINGLE_GROUP(core,
     OCTSTR(ssl-server-key-file)
     OCTSTR(ssl-trusted-ca-file)
     OCTSTR(dlr-storage)
+    OCTSTR(dlr-retry-count)
+    OCTSTR(dlr-retry-delay)
     OCTSTR(maximum-queue-length)
     OCTSTR(sms-incoming-queue-limit)
     OCTSTR(sms-outgoing-queue-limit)
