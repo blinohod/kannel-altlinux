@@ -21,14 +21,6 @@ Source4: kannel.init
 Source5: kannel.logrotate
 Source6: kannel.monit
 
-#Patch0: kannel_store_tools.patch
-#Patch1: kannel-dlr-retry.patch
-#Patch2: kannel-dlr-status.patch
-#Patch3: kannel-generic-mo.patch
-#Patch4: kannel-smsc-speed.patch
-#Patch5: kannel-smsc-start-at-boot.patch
-#Patch6: kannel-pam.patch
-
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines 
 
@@ -58,7 +50,6 @@ Compiled with PAM, SSL, MySQL, PostgreSQL, SQLite3 and native malloc.
 Summary: Development files for the kannel WAP and SMS gateway
 Group: Development/C
 Requires: %name = %version
-BuildRequires: gcc-c++ libmysqlclient-devel libpam-devel libpcre-devel libsqlite3-devel libssl-devel libxml2-devel openssl postgresql-devel sqlite3 zlib-devel
 
 %description devel
 This package contains libraries and header files for Kannel WAP and SMS
@@ -68,13 +59,6 @@ applications that use Kannel.
 %prep
 %setup -c -n %name-%version
 %setup -T -D -a 1
-
-#%patch0 -p0
-#%patch1 -p0
-#%patch2 -p0
-#%patch3 -p0
-#%patch4 -p0
-#%patch5 -p0
 
 %build 
 cd gateway-%version
