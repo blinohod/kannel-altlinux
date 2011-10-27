@@ -119,6 +119,7 @@ mkdir -p %buildroot%_var/spool/kannel
 install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
 install -m 755 test/wapproxy %buildroot%_bindir
+install -m 755 test/store_tools %buildroot%_bindir/kannel-store-tools
 install -m 755 %SOURCE2 %buildroot%_initdir/kannel.bearerbox
 install -m 755 %SOURCE3 %buildroot%_initdir/kannel.smsbox
 install -m 755 %SOURCE4 %buildroot%_initdir/kannel
