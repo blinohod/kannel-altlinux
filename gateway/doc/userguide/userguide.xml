@@ -3574,6 +3574,14 @@ address-range = ""
      	 try to send the message to the recipient. Defined in minutes.
      </entry></row>
 
+   <row><entry><literal>esm-class</literal></entry>
+     <entry><literal>number</literal></entry>
+     <entry valign="bottom">
+       Change the "esm_class" parameter sent from Kannel. 
+       Accepted values are 0 (Default SMSC Mode) and 3 (Store and Forward). 
+       Defaults to 3.
+     </entry></row>
+
    </tbody></tgroup></informaltable>
 
 </sect2>
@@ -3821,9 +3829,9 @@ smsc-password = foo
     <row><entry><literal>priority</literal></entry>
       <entry><literal>number</literal></entry>
       <entry valign="bottom">
-      Optional, sets the default priority of messages transmitted 
-		over this smsc link. (Defaults to 0, which is the highest
-		priority)
+      Optional, sets the default priority of messages transmitted
+      over this smsc link.
+      (Defaults to 0, which is the lowest priority).
      </entry></row>
 
    </tbody></tgroup></informaltable>
@@ -8005,6 +8013,7 @@ the Kannel configuration, or 'Authorization failed' is returned.
    <entry>number</entry>
    <entry valign="bottom">
      Optional. Sets the Priority value (range 0-3 is allowed).
+     (Defaults to 0, which is the lowest priority).
    </entry></row>
 
   </tbody>
