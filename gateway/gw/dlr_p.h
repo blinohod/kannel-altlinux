@@ -139,6 +139,14 @@ struct dlr_storage {
      * Shutdown storage
      */
     void (*dlr_shutdown) (void);
+    /*
+     * How many times do we retry the dlr_find?
+     */
+    long retry_count;
+    /*
+     * Delay between the retries 
+     */
+    double retry_delay;
 };
 
 /*
