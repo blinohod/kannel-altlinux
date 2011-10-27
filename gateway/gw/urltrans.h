@@ -106,7 +106,8 @@ enum {
     TRANSTYPE_TEXT,
     TRANSTYPE_FILE,
     TRANSTYPE_EXECUTE,
-    TRANSTYPE_SENDSMS
+    TRANSTYPE_SENDSMS,
+    TRANSTYPE_SENDSMS_PAM
 };
 
 
@@ -181,6 +182,12 @@ URLTranslation *urltrans_find(URLTranslationList *trans, Msg *msg);
 URLTranslation *urltrans_find_service(URLTranslationList *trans, Msg *msg); 
 
 
+/*
+ * find matching URLTranslation for the given type, or NULL
+ * if not found.
+ */
+List *urltrans_find_type(URLTranslationList *trans,
+                                       int type);
 /*
  * find matching URLTranslation for the given 'username', or NULL
  * if not found. Password must be checked afterwards
@@ -285,10 +292,11 @@ Octstr *urltrans_header(URLTranslation *t);
  */
 Octstr *urltrans_footer(URLTranslation *t);
 
+void urltrans_set_username(URLTranslation *t, Octstr *value);
 
 /*
  * return the name, username or password string, or NULL if not set
- * (used only with TRANSTYPE_SENDSMS)
+ * (used only with TRANSTYPE_SENDSMS and TRANSTYPE_SENDSMS_PAM)
  */
 Octstr *urltrans_name(URLTranslation *t);
 Octstr *urltrans_username(URLTranslation *t);

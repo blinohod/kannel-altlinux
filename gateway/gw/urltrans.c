@@ -205,7 +205,7 @@ int urltrans_add_one(URLTranslationList *trans, CfgGroup *grp)
     if (ot == NULL)
 	return -1;
 
-    if (ot->type != TRANSTYPE_SENDSMS && ot->keyword_regex == NULL)
+    if (ot->type != TRANSTYPE_SENDSMS && ot->type != TRANSTYPE_SENDSMS_PAM && ot->keyword_regex == NULL)
         gwlist_append(trans->defaults, ot);
     else 
         gwlist_append(trans->list, ot);
@@ -244,6 +244,15 @@ int urltrans_add_cfg(URLTranslationList *trans, Cfg *cfg)
     }
     gwlist_destroy(list, NULL);
 
+    list = cfg_get_multi_group(cfg, octstr_imm("sendsms-pam-user"));
+    while (list && (grp = gwlist_extract_first(list)) != NULL) {
+        if (urltrans_add_one(trans, grp) == -1) {
+            gwlist_destroy(list, NULL);
+            return -1;
+        }
+    }
+    gwlist_destroy(list, NULL);
+
     return 0;
 }
 
@@ -276,7 +285,6 @@ URLTranslation *urltrans_find_service(URLTranslationList *trans, Msg *msg)
 }
 
 
-
 URLTranslation *urltrans_find_username(URLTranslationList *trans, Octstr *name)
 {
     URLTranslation *t;
@@ -291,6 +299,27 @@ URLTranslation *urltrans_find_username(URLTranslationList *trans, Octstr *name)
 	}
     }
     return NULL;
+}
+
+
+/*
+ * Returns a list with all the translations of a given type
+ */
+List *urltrans_find_type(URLTranslationList *trans, int type)
+{
+    URLTranslation *t;
+    List *tlist;
+    int i;
+
+    tlist = gwlist_create();
+
+    for (i = 0; i < gwlist_len(trans->list); ++i) {
+        t = gwlist_get(trans->list, i);
+        if (t->type == type) {
+            gwlist_append(tlist, t);
+        }
+    }
+    return tlist;
 }
 
 /*
@@ -671,7 +700,8 @@ Octstr *urltrans_get_pattern(URLTranslation *t, Msg *request)
 {
     Octstr *result, *pattern;
     
-    if (request->sms.sms_type != report_mo && t->type == TRANSTYPE_SENDSMS)
+    if (request->sms.sms_type != report_mo &&
+            (t->type == TRANSTYPE_SENDSMS || t->type == TRANSTYPE_SENDSMS_PAM))
         return octstr_create("");
 
     /* check if this is a delivery report message or not */
@@ -764,6 +794,11 @@ Octstr *urltrans_header(URLTranslation *t)
 Octstr *urltrans_footer(URLTranslation *t) 
 {
     return t->footer;
+}
+
+void urltrans_set_username(URLTranslation *t, Octstr *value)
+{
+    t->username = value;
 }
 
 Octstr *urltrans_name(URLTranslation *t) 
@@ -877,7 +912,7 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
     Octstr *url, *post_url, *post_xml, *text, *file, *exec;
     Octstr *accepted_smsc, *accepted_account, *forced_smsc, *default_smsc;
     Octstr *grpname;
-    int is_sms_service, regex_flag = REG_EXTENDED;
+    int is_sms_service, is_pam, regex_flag = REG_EXTENDED;
     Octstr *accepted_smsc_regex;
     Octstr *accepted_account_regex;
     Octstr *allowed_prefix_regex;
@@ -893,11 +928,15 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
     if (grpname == NULL)
     	return NULL;
 
-    if (octstr_str_compare(grpname, "sms-service") == 0)
+    is_pam = 0;
+    if (octstr_str_compare(grpname, "sms-service") == 0) {
         is_sms_service = 1;
-    else if (octstr_str_compare(grpname, "sendsms-user") == 0)
+    } else if (octstr_str_compare(grpname, "sendsms-user") == 0) {
         is_sms_service = 0;
-    else {
+    } else if (octstr_str_compare(grpname, "sendsms-pam-user") == 0) {
+        is_sms_service = 0;
+        is_pam = 1;
+    } else {
         octstr_destroy(grpname);
         return NULL;
     }
@@ -997,7 +1036,6 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
 	        }
 	        gwlist_destroy(l, octstr_destroy_item);
 	    }
-	    
 	    octstr_append_cstr(keyword_regex, ")[ ]*");
 	}
 
@@ -1056,7 +1094,8 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
 	ot->denied_recv_prefix = cfg_get(grp, octstr_imm("denied-receiver-prefix"));
         denied_receiver_prefix_regex = cfg_get(grp, octstr_imm("denied-receiver-prefix-regex"));
         if (denied_receiver_prefix_regex != NULL) {
-            if ((ot->denied_receiver_prefix_regex = gw_regex_comp(denied_receiver_prefix_regex, REG_EXTENDED)) == NULL)
+            if ((ot->denied_receiver_prefix_regex = gw_regex_comp(denied_receiver_prefix_regex,
+                    REG_EXTENDED)) == NULL)
             panic(0, "Could not compile pattern '%s'",octstr_get_cstr(denied_receiver_prefix_regex));
             octstr_destroy(denied_receiver_prefix_regex);
         }
@@ -1066,18 +1105,24 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
 	ot->has_catchall_arg = 
 	    (count_occurences(ot->pattern, octstr_imm("%r")) > 0) ||
 	    (count_occurences(ot->pattern, octstr_imm("%a")) > 0);
-
     } else {
+        if (is_pam)
+            ot->type = TRANSTYPE_SENDSMS_PAM;
+        else
 	ot->type = TRANSTYPE_SENDSMS;
 	ot->pattern = octstr_create("");
 	ot->args = 0;
 	ot->has_catchall_arg = 0;
 	ot->catch_all = 1;
+        if (!is_pam) {
 	ot->username = cfg_get(grp, octstr_imm("username"));
 	ot->password = cfg_get(grp, octstr_imm("password"));
+        } else {
+            ot->username = cfg_get(grp, octstr_imm("acl"));
+        }
 	ot->dlr_url = cfg_get(grp, octstr_imm("dlr-url"));
 	grp_dump(grp);
-	if (ot->password == NULL) {
+        if (!is_pam && ot->password == NULL) {
 	    error(0, "Password required for send-sms user");
 	    goto error;
 	}
@@ -1094,9 +1139,9 @@ static URLTranslation *create_onetrans(CfgGroup *grp)
 	    }
 	    ot->forced_smsc = forced_smsc;
 	    octstr_destroy(default_smsc);
-	} else  if (default_smsc != NULL)
+        } else  if (default_smsc != NULL) {
 	    ot->default_smsc = default_smsc;
-
+        }
 	ot->deny_ip = cfg_get(grp, octstr_imm("user-deny-ip"));
 	ot->allow_ip = cfg_get(grp, octstr_imm("user-allow-ip"));
 	ot->default_sender = cfg_get(grp, octstr_imm("default-sender"));
