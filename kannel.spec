@@ -1,15 +1,11 @@
-# $Id: kannel.spec 2836 2005-01-17 11:53:55Z dude $
-# Authority: matthias
-
-%define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20110819
+%define kannel_build svn4937
 
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt5.cvs%cvs_build
+Release: alt6.%kannel_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -114,10 +110,12 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 	2> /dev/null > /dev/null ||:
 
 %post
-%post_service kannel
+%post_service kannel.bearerbox
+%post_service kannel.smsbox
 
 %preun
-%preun_service kannel
+%preun_service kannel.smsbox
+%preun_service kannel.bearerbox
 
 %files
 %doc gateway-%version/{AUTHORS,ChangeLog,COPYING,NEWS,README,STATUS,contrib,doc}
@@ -142,6 +140,14 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Fri Oct 28 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt6.svn4937
+- Source updated from fresh SVN (2011-10-26)
+- The following patches applied:
+  + PAM authentication support;
+  + DLR delivery retry
+  + kannel-store-tools utility for managing SMS store
+- Configuration rewritten
+
 * Mon Sep 12 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt5cvs20110819
 - Tuned
 
