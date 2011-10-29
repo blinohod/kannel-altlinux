@@ -3,7 +3,7 @@
 # chkconfig: 2345 98 03
 # description: Kannel WAP/SMS gateway smsbox.
 # processname: /usr/sbin/smsbox
-# pidfile: /var/run/smsbox.pid
+# pidfile: /var/run/kannel/smsbox.pid
 #
 # probe: true
 

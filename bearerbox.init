@@ -3,7 +3,7 @@
 # chkconfig: 2345 97 03
 # description: Kannel WAP/SMS gateway bearerbox.
 # processname: /usr/sbin/bearerbox
-# pidfile: /var/run/bearerbox.pid
+# pidfile: /var/run/kannel/bearerbox.pid
 #
 # probe: true
 
