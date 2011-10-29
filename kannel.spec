@@ -5,7 +5,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt6.%kannel_build
+Release: alt7.%kannel_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -140,6 +140,9 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Oct 29 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt7.svn4937
+- Small fix in init-scripts
+
 * Fri Oct 28 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt6.svn4937
 - Source updated from fresh SVN (2011-10-26)
 - The following patches applied:
