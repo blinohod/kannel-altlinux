@@ -130,6 +130,9 @@
 /* Define if you have the backtrace function. */
 #undef HAVE_BACKTRACE
 
+/* Define if you have the user context functions. */
+#undef HAVE_UCONTEXT
+
 /* Define if you have the srandom function. */
 #undef HAVE_SRANDOM
 
@@ -196,8 +199,12 @@
 /* Define if there is a socklen_t in <sys/socket.h> */
 #undef HAVE_SOCKLEN_T
 
-/* Define if the PAM headers are on the local machine */
-#undef HAVE_SECURITY_PAM_APPL_H
+/* Define if you have the pam headers */
+#undef HAVE_PAM
+
+/* Define where are the PAM headers */
+#undef HAVE_PAM_SECURITY
+#undef HAVE_PAM_PAM
 
 /* Define if you want to turn off assertion checking */
 #undef NO_GWASSERT

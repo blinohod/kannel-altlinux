@@ -85,8 +85,10 @@
 #include "ota_compiler.h"
 #include "xml_shared.h"
 
-#ifdef HAVE_SECURITY_PAM_APPL_H
+#ifdef HAVE_PAM_SECURITY
 #include <security/pam_appl.h>
+#elif defined HAVE_PAM_PAM
+#include <pam/pam_appl.h>
 #endif
 
 
@@ -242,9 +244,12 @@ static void read_messages_from_bearerbox(void)
     while (program_status != shutting_down) {
         /* block infinite for reading messages */
         ret = read_from_bearerbox(&msg, INFINITE_TIME);
-        if (ret == -1)
+        if (ret == -1) {
+            error(0, "Bearerbox is gone, restarting");
+            program_status = shutting_down;
+            restart = 1;
             break;
-        else if (ret == 1) /* timeout */
+        } else if (ret == 1) /* timeout */
             continue;
         else if (msg == NULL) /* just to be sure, may not happens */
             break;
@@ -1267,20 +1272,21 @@ static int obey_request(Octstr **result, URLTranslation *trans, Msg *msg)
 	if (msg->sms.coding == DC_8BIT)
 	    http_header_add(request_headers, "Content-Type",
 			    "application/octet-stream");
-	else
-	    if(msg->sms.coding == DC_UCS2)
+	else if(msg->sms.coding == DC_UCS2)
 		http_header_add(request_headers, "Content-Type", "text/plain; charset=\"UTF-16BE\"");
-	    else {
-		Octstr *header;
-		header = octstr_create("text/plain");
-		if(msg->sms.charset) {
-		    octstr_append(header, octstr_imm("; charset=\""));
-		    octstr_append(header, msg->sms.charset);
-		    octstr_append(header, octstr_imm("\""));
-		}
-		http_header_add(request_headers, "Content-Type", octstr_get_cstr(header));
-		O_DESTROY(header);
-	    }
+	else {
+	    Octstr *header;
+	    header = octstr_create("text/plain");
+	    if(msg->sms.charset) {
+	        octstr_append(header, octstr_imm("; charset=\""));
+	        octstr_append(header, msg->sms.charset);
+	        octstr_append(header, octstr_imm("\""));
+	    } else {
+                octstr_append(header, octstr_imm("; charset=\"UTF-8\""));
+            }
+	    http_header_add(request_headers, "Content-Type", octstr_get_cstr(header));
+	    O_DESTROY(header);
+	}
 	if (urltrans_send_sender(trans))
 	    http_header_add(request_headers, "X-Kannel-From",
 			    octstr_get_cstr(msg->sms.receiver));
@@ -1761,7 +1767,7 @@ static void obey_request_thread(void *arg)
  */
 
 
-#ifdef HAVE_SECURITY_PAM_APPL_H /*Module for pam authentication */
+#ifdef HAVE_PAM /* Module for pam authentication */
 
 /*
  * Use PAM (Pluggable Authentication Module) to check sendsms authentication.
@@ -1824,7 +1830,7 @@ static struct pam_conv PAM_conversation = {
 };
 
 
-static int authenticate(const char *login, const char *passwd)
+static int authenticate(const char *acl, const char *login, const char *passwd)
 {
     pam_handle_t *pamh;
     int pam_error;
@@ -1832,9 +1838,11 @@ static int authenticate(const char *login, const char *passwd)
     PAM_username = login;
     PAM_password = passwd;
     
-    pam_error = pam_start("kannel", login, &PAM_conversation, &pamh);
+    pam_error = pam_start(acl, login, &PAM_conversation, &pamh);
+    info(0, "Starting PAM for user: %s", login);
     if (pam_error != PAM_SUCCESS ||
         (pam_error = pam_authenticate(pamh, 0)) != PAM_SUCCESS) {
+        warning(0, "PAM auth failed for user: %s", login);
 	pam_end(pamh, pam_error);
 	return 0;
     }
@@ -1843,36 +1851,7 @@ static int authenticate(const char *login, const char *passwd)
     return 1;
 }
 
-
-/*
- * Check for matching username and password for requests.
- * Return an URLTranslation if successful NULL otherwise.
- */
-
-static int pam_authorise_user(List *list) 
-{
-    Octstr *val, *user = NULL;
-    char *pwd, *login;
-    int result;
-
-    if ((user = http_cgi_variable(list, "user")) == NULL &&
-        (user = http_cgi_variable(list, "username"))==NULL)
-	return 0;
-    login = octstr_get_cstr(user);
-    
-    if ((val = http_cgi_variable(list, "password")) == NULL &&
-        (val = http_cgi_variable(list, "pass")) == NULL)
-	return 0;
-
-    pwd = octstr_get_cstr(val);
-    result = authenticate(login, pwd);
-    
-    return result;
-}
-
-#endif /* HAVE_SECURITY_PAM_APPL_H */
-
-
+#endif /* HAVE_PAM */
 
 
 static Octstr* store_uuid(Msg *msg)
@@ -2250,7 +2229,6 @@ static Octstr *smsbox_req_handle(URLTranslation *t, Octstr *client_ip,
     }
 
     while ((receiv = gwlist_extract_first(allowed)) != NULL) {
-
 	O_DESTROY(msg->sms.receiver);
         msg->sms.receiver = octstr_duplicate(receiv);
 
@@ -2351,9 +2329,9 @@ static URLTranslation *authorise_username(Octstr *username, Octstr *password,
     if ((t = urltrans_find_username(translations, username))==NULL)
 	return NULL;
 
-    if (octstr_compare(password, urltrans_password(t))!=0)
+    if (octstr_compare(password, urltrans_password(t))!=0) {
 	return NULL;
-    else {
+    } else {
 	Octstr *allow_ip = urltrans_allow_ip(t);
 	Octstr *deny_ip = urltrans_deny_ip(t);
 	
@@ -2389,20 +2367,52 @@ static URLTranslation *default_authorise_user(List *list, Octstr *client_ip)
 
 static URLTranslation *authorise_user(List *list, Octstr *client_ip) 
 {
-#ifdef HAVE_SECURITY_PAM_APPL_H
     URLTranslation *t;
     
-    t = urltrans_find_username(translations, octstr_imm("pam"));
+    /* We first try to authorize locally, because is faster and more likely to be used */
+    t = default_authorise_user(list, client_ip);
     if (t != NULL) {
-	if (pam_authorise_user(list))
 	    return t;
-	else 
+    }
+#if HAVE_PAM
+    int i;
+    Octstr *allow_ip, *deny_ip;
+
+    Octstr *val, *user = NULL;
+    char *pwd, *login, *acl;
+    int result;
+
+    List *trans = urltrans_find_type(translations, TRANSTYPE_SENDSMS_PAM);
+    for (i = 0; i < gwlist_len(trans); ++i) {
+        t = gwlist_get(trans, i);
+        if (t != NULL) {
+            if ((user = http_cgi_variable(list, "user")) == NULL &&
+                (user = http_cgi_variable(list, "username"))==NULL)
+                return NULL;
+            login = octstr_get_cstr(user);
+
+            if ((val = http_cgi_variable(list, "password")) == NULL &&
+                (val = http_cgi_variable(list, "pass")) == NULL)
+                return NULL;
+
+            pwd = octstr_get_cstr(val);
+            acl = octstr_get_cstr(urltrans_username(t));
+            result = authenticate(acl, login, pwd);
+            if (result) {
+                urltrans_set_username(t, octstr_format("%S:%S", urltrans_username(t), user));
+                allow_ip = urltrans_allow_ip(t);
+                deny_ip = urltrans_deny_ip(t);
+                if (is_allowed_ip(allow_ip, deny_ip, client_ip) == 0) {
+                    warning(0, "[pam] Non-allowed connect tried by <%s> from <%s>, ignored",
+                        octstr_get_cstr(urltrans_username(t)), octstr_get_cstr(client_ip));
+                    return NULL;
+                }
+                return t;
+            }
+        }
+    }
+#endif /* HAVE_PAM */
 	    return NULL;
-    } else
-	return default_authorise_user(list, client_ip);
-#else
-    return default_authorise_user(list, client_ip);
-#endif
 }
 
 
@@ -2581,12 +2591,6 @@ static Octstr *smsbox_sendsms_post(List *headers, Octstr *body,
 	goto error;
     }
 
-    if (charset_processing(charset, body, coding) == -1) {
-	*status = HTTP_BAD_REQUEST;
-	ret = octstr_create("Invalid charset");
-	goto error2;
-    }
-
     /* check the username and password */
     t = authorise_username(user, pass, client_ip);
     if (t == NULL) {
@@ -2620,13 +2624,13 @@ static Octstr *smsbox_sendsms_post(List *headers, Octstr *body,
 	    ret = octstr_create("Unsupported content-type, rejected");
 	}
 
-	if (ret == NULL)
+        if (ret == NULL) {
 	    ret = smsbox_req_handle(t, client_ip, client, from, to, body, charset,
 				    udh, smsc, mclass, mwi, coding, compress, 
 				    validity, deferred, status, dlr_mask, 
 				    dlr_url, account, pid, alt_dcs, rpi, tolist,
 				    binfo, priority, meta_data);
-
+        }
     }
 error2:
     octstr_destroy(user);
@@ -3618,14 +3622,13 @@ int main(int argc, char **argv)
      * Otherwise we will fail while trying to connect to bearerbox!
      */
     if (restart) {
-        gwthread_sleep(5.0);
+        gwthread_sleep(10.0);
+        /* now really restart */
+        restart_box(argv);
     }
 
+    log_close_all();
     gwlib_shutdown();
-
-    /* now really restart */
-    if (restart)
-        execvp(argv[0], argv);
 
     return 0;
 }

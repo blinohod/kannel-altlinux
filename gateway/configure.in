@@ -239,6 +239,9 @@ AC_CHECK_HEADERS([net/if.h], [], [],
    # include <sys/socket.h>
    #endif
   ])
+AC_CHECK_HEADERS([sys/ucontext.h], [AC_DEFINE(HAVE_UCONTEXT)],
+  [AC_MSG_WARN(System lacks ucontext.h - user context support)]
+)
 
 dnl Checks for typedefs, structures, and compiler characteristics.
 
@@ -676,26 +679,6 @@ AC_ARG_ENABLE(assertions,
 ])
 
 
-dnl Implement the --enable-pam option.
-
-AC_ARG_ENABLE(pam,
-[  --enable-pam	          enable PAM authentication @<:@disabled@:>@], [
-    if test "$enableval" = "yes"
-    then
-	AC_CHECK_LIB(pam, pam_end)
-	AC_CHECK_LIB(dl,main)
-	AC_CHECK_HEADERS(security/pam_appl.h)
-	PAMTARGET="pam"
-    else
-	PAMTARGET="no-pam"
-    fi
-])
-case "$PAMTARGET" in
-no-pam) echo PAM authentication is disabled. ;;
-pam) echo PAM authentication is enabled. ;;
-esac
-
-
 dnl Implement --enable-debug option.
 
 AC_ARG_ENABLE(debug,
@@ -792,6 +775,31 @@ AC_ARG_ENABLE(sms,
   then
     echo disabling SMS gateway parts in bearerbox
     AC_DEFINE(NO_SMS)
+  fi
+])
+
+
+dnl Implement the --enable-pam option.
+
+AC_CONFIG_SECTION([Configuring PAM support])
+
+AC_MSG_CHECKING([whether to compile with PAM support])
+AC_ARG_ENABLE(pam,
+[  --enable-pam	          enable PAM authentication @<:@disabled@:>@], [
+  if test "$enableval" = "yes"
+  then
+    AC_CHECK_LIB(pam, pam_end)
+    AC_CHECK_LIB(dl,main)
+    AC_CHECK_HEADER([security/pam_appl.h],
+      AC_DEFINE(HAVE_PAM_SECURITY) \
+      AC_DEFINE(HAVE_PAM) \
+      AC_MSG_RESULT([enabling PAM for authentication]),
+      [AC_CHECK_HEADER([pam/pam_appl.h],
+        AC_DEFINE(HAVE_PAM_PAM) \
+        AC_DEFINE(HAVE_PAM) \
+        AC_MSG_RESULT([enabling PAM for authentication])
+      )]
+    )
   fi
 ])
 

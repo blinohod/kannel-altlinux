@@ -571,22 +571,27 @@ static void kannel_send_sms(SMSCConn *conn, Msg *sms)
 			     conndata->username, conndata->password,
 			     sms->sms.receiver, sms->sms.msgdata);
     } else {
-        octstr_binary_to_hex(sms->sms.msgdata, HEX_NOT_UPPERCASE);
+        Octstr *msgdata = octstr_duplicate(sms->sms.msgdata);
+        
+        octstr_binary_to_hex(msgdata, HEX_NOT_UPPERCASE);
         url = octstr_format("%S?"
 			    "username=%E&password=%E&to=%E&text=%S",
 			     conndata->send_url,
 			     conndata->username, conndata->password,
-			     sms->sms.receiver, 
-                             sms->sms.msgdata); 
+			     sms->sms.receiver, msgdata);
+        octstr_destroy(msgdata);
     }   
 
     if (octstr_len(sms->sms.udhdata)) {
         if (!conndata->no_sep) {
-	    octstr_format_append(url, "&udh=%E", sms->sms.udhdata);
+            octstr_format_append(url, "&udh=%E", sms->sms.udhdata);
         } else {
-	    octstr_binary_to_hex(sms->sms.udhdata, HEX_NOT_UPPERCASE);
-            octstr_format_append(url, "&udh=%S", sms->sms.udhdata);
-	}
+            Octstr *udhdata = octstr_duplicate(sms->sms.udhdata);
+            
+            octstr_binary_to_hex(udhdata, HEX_NOT_UPPERCASE);
+            octstr_format_append(url, "&udh=%S", udhdata);
+            octstr_destroy(udhdata);
+        }
     }
 
     if (!conndata->no_sender)
@@ -1953,18 +1958,31 @@ static void generic_parse_reply(SMSCConn *conn, Msg *msg, int status,
     if ((conndata->success_regex != NULL) && 
         (gw_regex_exec(conndata->success_regex, body, 0, NULL, 0) == 0)) {
         /* SMSC ACK... the message id should be in the body */
-        if ((conndata->generic_foreign_id_regex != NULL) && DLR_IS_ENABLED_DEVICE(msg->sms.dlr_mask)) {
-            if (gw_regex_exec(conndata->generic_foreign_id_regex, body, sizeof(pmatch) / sizeof(regmatch_t), pmatch, 0) == 0) {
-                if (pmatch[1].rm_so != -1 && pmatch[1].rm_eo != -1) {
-                    msgid = octstr_copy(body, pmatch[1].rm_so, pmatch[1].rm_eo - pmatch[1].rm_so);
-                    debug("smsc.http.generic", 0, "HTTP[%s]: Found foreign message id <%s> in body.", octstr_get_cstr(conn->id), octstr_get_cstr(msgid));
-                    dlr_add(conn->id, msgid, msg);
+        
+        /* add to our own DLR storage */               
+        if (DLR_IS_ENABLED_DEVICE(msg->sms.dlr_mask)) {
+            /* directive 'generic-foreign-id-regex' is present, fetch the foreign ID */
+            if ((conndata->generic_foreign_id_regex != NULL)) {
+                if (gw_regex_exec(conndata->generic_foreign_id_regex, body, sizeof(pmatch) / sizeof(regmatch_t), pmatch, 0) == 0) {
+                    if (pmatch[1].rm_so != -1 && pmatch[1].rm_eo != -1) {
+                        msgid = octstr_copy(body, pmatch[1].rm_so, pmatch[1].rm_eo - pmatch[1].rm_so);
+                        debug("smsc.http.generic", 0, "HTTP[%s]: Found foreign message id <%s> in body.", 
+                              octstr_get_cstr(conn->id), octstr_get_cstr(msgid));
+                        dlr_add(conn->id, msgid, msg);
+                        octstr_destroy(msgid);
+                    }
                 }
-            }
-            if (msgid == NULL)
-                warning(0, "HTTP[%s]: Can't get the foreign message id from the HTTP body.", octstr_get_cstr(conn->id));
-            else
+                if (msgid == NULL)
+                    warning(0, "HTTP[%s]: Can't get the foreign message id from the HTTP body.", 
+                            octstr_get_cstr(conn->id));
+            } else {
+                char id[UUID_STR_LEN + 1];
+                /* use own own UUID as msg ID in the DLR storage */
+                uuid_unparse(msg->sms.id, id);
+                msgid = octstr_create(id); 
+                dlr_add(conn->id, msgid, msg);
                 octstr_destroy(msgid);
+            }
         }
         bb_smscconn_sent(conn, msg, NULL);
     } 

@@ -1,35 +1,29 @@
-# $Id: kannel.spec 2836 2005-01-17 11:53:55Z dude $
-# Authority: matthias
-
-%define branch meta-data
 %define kannel_user kannel
 %define kannel_group kannel
-%define cvs_build 20091101
+%define kannel_build svn4937
 
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt1.cvs%cvs_build
+Release: alt7.%kannel_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
 Source: gateway-%version.tar.bz2
-Source1: bearerbox.init
-Source2: smsbox.init
-Source3: kannel.logrotate
-Source4: kannel.monit
-Patch0: kannel-1.4.1-alt-rm_enquire_link.patch
-Patch1: kannel_store_tools.patch
-Patch2: kannel-dlr-retry.patch
-Patch3: kannel-pam.patch
+Source1: config-%version.tar.bz2
+Source2: bearerbox.init
+Source3: smsbox.init
+Source5: kannel.logrotate
+Source6: kannel.monit
 
 PreReq: monit-base
 BuildPreReq: linux-libc-headers openssl-engines 
 
 Packager: Michael Bochkaryov <misha@altlinux.ru>
 
-# Automatically added by buildreq on Wed Nov 11 2009 (-bi)
-BuildRequires: ImageMagick-tools flex libMySQL-devel libpam-devel libpcre-devel libsqlite3-devel libxml2-devel openssl postgresql-devel sqlite3 
+# Automatically added by buildreq on Wed Sep 07 2011 (-bi)
+# optimized out: elfutils libcom_err-devel libkrb5-devel libpq-devel
+BuildRequires: ImageMagick-tools flex gcc-c++ libmysqlclient-devel libpam-devel libpcre-devel libsqlite3-devel libssl-devel libxml2-devel openssl postgresql-devel sqlite3 zlib-devel
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -58,13 +52,11 @@ gateway. Install this package if you need to develop or recompile
 applications that use Kannel.
 
 %prep
-%setup -n gateway-%version
-%patch0 -p2
-%patch1 -p0
-%patch2 -p0
-%patch3 -p0
+%setup -c -n %name-%version
+%setup -T -D -a 1
 
-%build
+%build 
+cd gateway-%version
 %configure \
 		--with-cflags='-fPIC' \
 		--enable-cookies \
@@ -90,29 +82,27 @@ applications that use Kannel.
 %make
 
 %install
+cd gateway-%version
 %makeinstall
 
 %make_install install-docs DESTDIR=%buildroot
-#mv %%buildroot%%_datadir/doc/kannel _docs
 
-mkdir -p %buildroot%_sysconfdir/kannel
 mkdir -p %buildroot%_sysconfdir/logrotate.d
 mkdir -p %buildroot%_sysconfdir/monitrc.d
 mkdir -p %buildroot%_initdir
 mkdir -p %buildroot%_logdir/kannel
-mkdir -p %buildroot%_localstatedir/kannel
+mkdir -p %buildroot%_localstatedir/kannel/cdr
 mkdir -p %buildroot%_var/run/kannel
-install -m 644 gw/wapkannel.conf %buildroot%_sysconfdir/kannel
-install -m 644 gw/smskannel.conf %buildroot%_sysconfdir/kannel
+mkdir -p %buildroot%_var/spool/kannel
 install -m 755 test/fakesmsc %buildroot%_bindir
 install -m 755 test/fakewap %buildroot%_bindir
-install -m 755 test/store_tools %buildroot%_bindir/kannel_store_tools
 install -m 755 test/wapproxy %buildroot%_bindir
-install -m 755 %SOURCE1 %buildroot%_initdir/kannel.bearerbox
-install -m 755 %SOURCE2 %buildroot%_initdir/kannel.smsbox
-install -m 755 %SOURCE3 %buildroot%_sysconfdir/logrotate.d/kannel
-install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
-
+install -m 755 test/store_tools %buildroot%_bindir/kannel-store-tools
+install -m 755 %SOURCE2 %buildroot%_initdir/kannel.bearerbox
+install -m 755 %SOURCE3 %buildroot%_initdir/kannel.smsbox
+install -m 755 %SOURCE5 %buildroot%_sysconfdir/logrotate.d/kannel
+install -m 755 %SOURCE6 %buildroot%_sysconfdir/monitrc.d/kannel
+cp -rf ../config %buildroot%_sysconfdir/kannel
 
 %pre
 %_sbindir/groupadd %kannel_group ||:
@@ -122,26 +112,27 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %post
 %post_service kannel.bearerbox
 %post_service kannel.smsbox
-                                                                                
+
 %preun
 %preun_service kannel.smsbox
 %preun_service kannel.bearerbox
-                                                                                
+
 %files
-%doc AUTHORS COPYING ChangeLog NEWS README STATUS contrib
-#%%doc _docs/*  
+%doc gateway-%version/{AUTHORS,ChangeLog,COPYING,NEWS,README,STATUS,contrib,doc}
 %_bindir/*
 %_sbindir/*
 #%%exclude %%_sbindir/start-stop-daemon
 %_mandir/man?/*
-%dir %_sysconfdir/kannel
+%dir %_sysconfdir/kannel/*
 %config(noreplace) %_sysconfdir/kannel/*
 %config(noreplace) %_sysconfdir/monitrc.d/*
 %config(noreplace) %_sysconfdir/logrotate.d/*
 %_initdir/*
 %attr(0770,%kannel_user,%kannel_group) %dir %_logdir/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_var/run/kannel
+%attr(0770,%kannel_user,%kannel_group) %dir %_var/spool/kannel
 %attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel
+%attr(0770,%kannel_user,%kannel_group) %dir %_localstatedir/kannel/cdr
 
 %files devel
 %_includedir/kannel/
@@ -149,6 +140,32 @@ install -m 755 %SOURCE4 %buildroot%_sysconfdir/monitrc.d/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Oct 29 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt7.svn4937
+- Small fix in init-scripts
+
+* Fri Oct 28 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt6.svn4937
+- Source updated from fresh SVN (2011-10-26)
+- The following patches applied:
+  + PAM authentication support;
+  + DLR delivery retry
+  + kannel-store-tools utility for managing SMS store
+- Configuration rewritten
+
+* Mon Sep 12 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt5cvs20110819
+- Tuned
+
+* Mon Sep 12 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt4cvs20110819
+- Internal DLR storage
+
+* Fri Sep 09 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt3cvs20110819
+- Added configs with included other
+
+* Wed Sep 07 2011 Dmitriy Kruglikov <dkr@altlinux.org> 1.5.0-alt2cvs20110819
+- Prepared for buiding
+
+* Wed Sep 07 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt2cvs20110819
+- Update sources from upstream SVN 2011-08-19
+
 * Sun Nov 08 2009 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt1.cvs20091101
 - Fixed build requirements
 - Added loopback smsc module

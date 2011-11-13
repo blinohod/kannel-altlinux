@@ -230,6 +230,7 @@ void dlr_init(Cfg* cfg)
 {
     CfgGroup *grp;
     Octstr *dlr_type;
+    long retry_delay;
 
     /* check which DLR storage type we are using */
     grp = cfg_get_single_group(cfg, octstr_imm("core"));
@@ -275,6 +276,14 @@ void dlr_init(Cfg* cfg)
     /* check needed function pointers */
     if (handles->dlr_add == NULL || handles->dlr_get == NULL || handles->dlr_remove == NULL)
         panic(0, "DLR: storage type '%s' don't implement needed functions", octstr_get_cstr(dlr_type));
+    
+    if (cfg_get_integer(&handles->retry_count, grp, octstr_imm("dlr-retry-count")) == -1) {
+    	handles->retry_count = 1;
+    }
+    if (cfg_get_integer(&retry_delay, grp, octstr_imm("dlr-retry-delay")) == -1) {
+    	retry_delay = 0;
+    }
+    handles->retry_delay = (double)retry_delay/1000.0;
 
     /* get info from storage */
     info(0, "DLR using storage type: %s", handles->type);
@@ -321,19 +330,7 @@ void dlr_add(const Octstr *smsc, const Octstr *ts, Msg *msg)
 {
     struct dlr_entry *dlr = NULL;
 
-    /* Add the foreign_id so all SMSC modules can use it.
-     * Obey also the original message in the split_parts list. */
-    if (msg->sms.foreign_id != NULL)
-        octstr_destroy(msg->sms.foreign_id);
-    msg->sms.foreign_id = octstr_duplicate(ts);
-    if (msg->sms.split_parts != NULL) {
-        struct split_parts *split = msg->sms.split_parts;
-        if (split->orig->sms.foreign_id != NULL)
-            octstr_destroy(split->orig->sms.foreign_id);
-        split->orig->sms.foreign_id = octstr_duplicate(ts);
-    }
-
-    if(octstr_len(smsc) == 0) {
+    if (octstr_len(smsc) == 0) {
         warning(0, "DLR[%s]: Can't add a dlr without smsc-id", dlr_type());
         return;
     }
@@ -378,6 +375,7 @@ Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ, 
     Msg	*msg = NULL;
     struct dlr_entry *dlr = NULL;
     Octstr *dst_min = NULL;
+		int retry = 0;
     
     if(octstr_len(smsc) == 0) {
 	warning(0, "DLR[%s]: Can't find a dlr without smsc-id", dlr_type());
@@ -398,13 +396,30 @@ Msg *dlr_find(const Octstr *smsc, const Octstr *ts, const Octstr *dst, int typ, 
     debug("dlr.dlr", 0, "DLR[%s]: Looking for DLR smsc=%s, ts=%s, dst=%s, type=%d",
                                  dlr_type(), octstr_get_cstr(smsc), octstr_get_cstr(ts), octstr_get_cstr(dst), typ);
 
-    dlr = handles->dlr_get(smsc, ts, dst_min);
-    if (dlr == NULL)  {
-        warning(0, "DLR[%s]: DLR from SMSC<%s> for DST<%s> not found.",
-                dlr_type(), octstr_get_cstr(smsc), octstr_get_cstr(dst));         
-        return NULL;
-    }
+   /*
+    * Retry the dlr search on the DB if not found at first attempt.
+    * This could happen specially with DB storage when using separate
+    * binds for sending and receiving.
+    */
+      while(retry < handles->retry_count) {
+       if (retry++ > 0) {
+         debug("dlr.dlr", 0, "Sleeping for %1.3f seconds", handles->retry_delay);
+         gwthread_sleep(handles->retry_delay);
+       }
+       dlr = handles->dlr_get(smsc, ts, dst);
 
+       if (dlr != NULL)
+       break;
+
+     debug("dlr.dlr", 0, "DLR from SMSC<%s> for DST<%s>. Attempt %d of %d.",
+         octstr_get_cstr(smsc), octstr_get_cstr(dst), retry, handles->retry_count);
+      }
+
+      if (dlr == NULL) {
+       warning(0, "DLR[%s]: DLR from SMSC<%s> for DST<%s> not found after %d attempts.",
+       dlr_type(), octstr_get_cstr(smsc), octstr_get_cstr(dst), handles->retry_count);
+       return NULL;
+      }
 #define O_SET(x, val) if (octstr_len(val) > 0) { x = val; val = NULL; }
 
     if ((typ & dlr->mask) > 0) {
@@ -475,7 +490,7 @@ void dlr_flush(void)
 }
 
 
-Msg* create_dlr_from_msg(const Octstr *smsc, const Msg *msg, const Octstr *reply, long stat)
+Msg *create_dlr_from_msg(const Octstr *smsc, const Msg *msg, const Octstr *reply, long stat)
 {
     Msg *dlrmsg;
 
@@ -483,8 +498,8 @@ Msg* create_dlr_from_msg(const Octstr *smsc, const Msg *msg, const Octstr *reply
         return NULL;
 
     /* generate DLR */
-    debug("dlr.dlr", 0,"SMSC[%s]: creating DLR message",
-                (smsc ? octstr_get_cstr(smsc) : "UNKNOWN"));
+    debug("dlr.dlr",0,"SMSC[%s]: creating DLR message",
+          (smsc ? octstr_get_cstr(smsc) : "UNKNOWN"));
 
     dlrmsg = msg_create(sms);
     gw_assert(dlrmsg != NULL);
@@ -501,9 +516,9 @@ Msg* create_dlr_from_msg(const Octstr *smsc, const Msg *msg, const Octstr *reply
     dlrmsg->sms.foreign_id = octstr_duplicate(msg->sms.foreign_id);
     time(&dlrmsg->sms.time);
 
-    debug("dlr.dlr", 0,"SMSC[%s]: DLR = %s",
-                (smsc ? octstr_get_cstr(smsc) : "UNKNOWN"),
-                (dlrmsg->sms.dlr_url ? octstr_get_cstr(dlrmsg->sms.dlr_url) : ""));
+    debug("dlr.dlr",0,"SMSC[%s]: DLR = %s",
+          (smsc ? octstr_get_cstr(smsc) : "UNKNOWN"),
+          (dlrmsg->sms.dlr_url ? octstr_get_cstr(dlrmsg->sms.dlr_url) : ""));
 
     return dlrmsg;
 }
