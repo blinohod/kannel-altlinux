@@ -5,12 +5,11 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt7.%kannel_build
+Release: alt9.%kannel_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
 Source: gateway-%version.tar.bz2
-Source1: config-%version.tar.bz2
 Source2: bearerbox.init
 Source3: smsbox.init
 Source5: kannel.logrotate
@@ -121,7 +120,6 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %doc gateway-%version/{AUTHORS,ChangeLog,COPYING,NEWS,README,STATUS,contrib,doc}
 %_bindir/*
 %_sbindir/*
-#%%exclude %%_sbindir/start-stop-daemon
 %_mandir/man?/*
 %dir %_sysconfdir/kannel/*
 %config(noreplace) %_sysconfdir/kannel/*
@@ -140,6 +138,13 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
+* Sat Jan 21 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt9.svn4937
+- MySQL and SQLite support returned
+- Remove unused sources
+
+* Fri Jan 20 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt8.svn4937
+- Drop all DB support except of PostgreSQL
+
 * Sat Oct 29 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt7.svn4937
 - Small fix in init-scripts
 
