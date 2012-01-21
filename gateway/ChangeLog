@@ -1,3 +1,34 @@
+2012-01-16  Stipe Tolj  <stolj at kannel.org>
+    * gw/smsc/smsc_[http|smpp].c: again, minor source code changes to follow
+      our doc/CodingStyle rules! NLC.
+      
+2012-01-12 Andreas Fink <afink at smsrelay.com>
+    * gw/smsc/smsc_smpp.c: proper handling of network_error_code. Kannel assumed
+      it was the same 3 characters as in the delivery report string but 
+      spec says something else so its properly converted now. 
+      Whitespace changes (removed tabs).
+    * ChangeLog. Corrected Stipe's year
+
+2012-01-07  Stipe Tolj  <stolj at kannel.org>
+    * gw/smsc/smsc_http.c: slight code change from Andrea's previous commit. We
+      don't need to allocate more variables on the stack as we have a temp 
+      Ocstr* already. NLC.
+      
+2012-01-07 Andreas Fink <afink at smsrelay.com> 
+    * gw/smsc/smsc_http.c: added new parameter for DLR named dlr-err which can
+      contain a network error code which is parsed the same way the err: field
+      in SMPP delivery reports are parsed.
+    * configure[.in]: added support for MacOS X 10.7 Lion SDK.
+
+2011-11-09 Alexander Malysh <amalysh at kannel.org>
+    * gwlib/octstr.c, gwlib/octstr.c.debug: fixed segfault on some systems where
+      long overflow occurs. This fixes #623.
+      Thanks to Lutalo Joseph Willrich for patch.
+
+2011-10-31 Alexander Malysh <amalysh at kannel.org>
+    * reverted commited that moved .foreign_id injection from dlr_add() because
+      it breaks other SMSC module as SMPP.
+
 2011-10-26 Alexander Malysh <amalysh at kannel.org>
     * wmlscript/wsgram.y: fixed compilation error.
 
