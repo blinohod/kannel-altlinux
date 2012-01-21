@@ -1,6 +1,6 @@
 %define kannel_user kannel
 %define kannel_group kannel
-%define kannel_build svn4937
+%define kannel_build svn4948
 
 Summary: WAP and SMS gateway
 Name: kannel
@@ -138,8 +138,9 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
-* Sat Jan 21 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt9.svn4937
+* Sat Jan 21 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt9.svn4948
 - MySQL and SQLite support returned
+- Source tree updated to 4948 revision
 - Remove unused sources
 
 * Fri Jan 20 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt8.svn4937
