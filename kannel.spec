@@ -5,7 +5,7 @@
 Summary: WAP and SMS gateway
 Name: kannel
 Version: 1.5.0
-Release: alt8.%kannel_build
+Release: alt7.%kannel_build
 License: Kannel
 Group: Communications
 URL: http://www.kannel.org/
@@ -23,7 +23,7 @@ Packager: Michael Bochkaryov <misha@altlinux.ru>
 
 # Automatically added by buildreq on Wed Sep 07 2011 (-bi)
 # optimized out: elfutils libcom_err-devel libkrb5-devel libpq-devel
-BuildRequires: ImageMagick-tools flex gcc-c++ libpam-devel libpcre-devel libssl-devel libxml2-devel openssl postgresql-devel zlib-devel
+BuildRequires: ImageMagick-tools flex gcc-c++ libmysqlclient-devel libpam-devel libpcre-devel libsqlite3-devel libssl-devel libxml2-devel openssl postgresql-devel sqlite3 zlib-devel
 
 %description
 Kannel is an open source software implementing the following functionality:
@@ -39,7 +39,7 @@ GSM modems, SMPP, UCP/EMI, CIMD and other SMSC connections are supported.
 
 * OTA Settings delivery platform.
 
-Compiled with PAM, SSL, PostgreSQL and native malloc.
+Compiled with PAM, SSL, MySQL, PostgreSQL, SQLite3 and native malloc.
 
 %package devel
 Summary: Development files for the kannel WAP and SMS gateway
@@ -73,7 +73,10 @@ cd gateway-%version
 		--disable-start-stop-daemon \
 		--with-defaults=speed \
 		--enable-wap \
+		--with-mysql \
 		--with-pgsql \
+		--without-sqlite \
+		--with-sqlite3 \
 		--with-ssl=%_libdir/openssl \
 		--disable-ssl-thread-test
 %make
@@ -137,9 +140,6 @@ cp -rf ../config %buildroot%_sysconfdir/kannel
 %_libdir/kannel/*.a
 
 %changelog
-* Fri Jan 20 2012 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt8.svn4937
-- Drop all DB support except of PostgreSQL
-
 * Sat Oct 29 2011 Michael Bochkaryov <misha@altlinux.ru> 1.5.0-alt7.svn4937
 - Small fix in init-scripts
 
