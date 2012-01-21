@@ -2,4 +2,3 @@ copy: *.init
 copy: *.logrotate
 copy: *.monit
 tar.bz2: gateway
-tar.bz2: config name=config-@version@ base=config
